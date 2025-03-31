@@ -117,6 +117,8 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for the /help command"""
     await show_help_menu(update, context)
+    # Show keyboard after help command
+    await show_persistent_keyboard(update, context)
 
 async def show_help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show help information with a back button"""
@@ -275,6 +277,10 @@ async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if not context.user_data.get('menu_messages'):
             context.user_data['menu_messages'] = []
         context.user_data['menu_messages'].append((chat_id_from_update(update), message.message_id))
+    
+    # Show persistent keyboard after admin menu
+    if not update.callback_query:
+        await show_persistent_keyboard(update, context)
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for the /stats command"""
@@ -1047,19 +1053,20 @@ async def show_persistent_keyboard(update: Update, context: ContextTypes.DEFAULT
         keyboard,
         resize_keyboard=True,      # Make the keyboard smaller
         one_time_keyboard=False,   # Keep the keyboard visible after selection
-        selective=False            # Show to all users in the chat
+        selective=False,           # Show to all users in the chat
+        input_field_placeholder="Выберите действие..."  # Placeholder text in input field
     )
     
     # Send with a simple message (or update existing message)
     if update.callback_query:
         await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="Меню бота обновлено. Теперь вы можете использовать кнопки внизу для быстрого доступа.",
+            chat_id=update.callback_query.message.chat_id,
+            text="Клавиатура обновлена. Используйте её для быстрого доступа к функциям бота.",
             reply_markup=reply_markup
         )
     else:
         await update.message.reply_text(
-            "Воспользуйтесь кнопками для управления ботом:",
+            "Воспользуйтесь клавиатурой для управления ботом:",
             reply_markup=reply_markup
         )
 
@@ -1105,7 +1112,8 @@ def main() -> None:
         fallbacks=[CallbackQueryHandler(button_callback)],
         name="check_conversation",
         persistent=False,
-        per_chat=True
+        per_chat=True,
+        per_message=True
     )
     application.add_handler(check_conv_handler)
     
@@ -1118,7 +1126,8 @@ def main() -> None:
         fallbacks=[CallbackQueryHandler(button_callback)],
         name="add_conversation",
         persistent=False,
-        per_chat=True
+        per_chat=True,
+        per_message=True
     )
     application.add_handler(add_conv_handler)
     
@@ -1131,7 +1140,8 @@ def main() -> None:
         fallbacks=[CallbackQueryHandler(button_callback)],
         name="remove_conversation",
         persistent=False,
-        per_chat=True
+        per_chat=True,
+        per_message=True
     )
     application.add_handler(remove_conv_handler)
     
@@ -1144,7 +1154,8 @@ def main() -> None:
         fallbacks=[CallbackQueryHandler(cancel_broadcast, pattern="^broadcast_cancel$")],
         name="broadcast_conversation",
         persistent=False,
-        per_chat=True
+        per_chat=True,
+        per_message=True
     )
     application.add_handler(broadcast_conv_handler)
     
