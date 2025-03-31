@@ -6,7 +6,7 @@ import json
 from typing import List, Dict, Any, Optional, Union, Tuple
 
 from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeChat
 from telegram.ext import (
     Application, 
     CommandHandler, 
@@ -63,88 +63,102 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show the main menu with inline buttons"""
+    # Clean up previous menus
+    await clean_previous_menus(update, context)
+    
+    # Identify the user
     user = update.effective_user
     
     # Create keyboard with main options
-    keyboard = [
-        [InlineKeyboardButton("Проверить в списке 🔍", callback_data="menu_check")],
-        [InlineKeyboardButton("Помощь ℹ️", callback_data="menu_help")]
-    ]
+    keyboard = []
     
-    # Add admin section if user is admin
+    # Add primary actions row
+    keyboard.append([
+        InlineKeyboardButton("🔍 Проверить значение", callback_data="action_check"),
+        InlineKeyboardButton("❓ Помощь", callback_data="action_help")
+    ])
+    
+    # Add admin panel row for admins
     if user.id in ADMIN_IDS:
-        keyboard.append([InlineKeyboardButton("Админ-панель 🔧", callback_data="menu_admin")])
+        keyboard.append([
+            InlineKeyboardButton("👑 Панель администратора", callback_data="menu_admin")
+        ])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Send or edit message based on context
-    if update.callback_query:
-        # Edit existing message
-        await update.callback_query.edit_message_text(
-            f"Главное меню MegaBuddies\n\nВыберите действие:",
-            reply_markup=reply_markup
-        )
-    else:
-        # Send new message
-        message = await update.message.reply_text(
-            f"Привет, {user.first_name}! Я бот MegaBuddies.\n\nВыберите действие:",
-            reply_markup=reply_markup
-        )
-        # Store message ID for future reference
-        if not context.user_data.get('menu_messages'):
-            context.user_data['menu_messages'] = []
-        context.user_data['menu_messages'].append((chat_id_from_update(update), message.message_id))
+    # Menu title and description
+    menu_text = (
+        "*🤖 Главное меню MegaBuddies*\n\n"
+        "Выберите действие из меню ниже.\n"
+        "• Используйте _Проверить значение_ для проверки информации в вайтлисте\n"
+        "• Используйте _Помощь_ для получения информации о командах\n"
+    )
+    
+    if user.id in ADMIN_IDS:
+        menu_text += "• Используйте _Панель администратора_ для доступа к админ-функциям\n"
+    
+    menu_text += "\n💡 Совет: В любой момент введите /menu для возврата в это меню"
+    
+    # Send the menu message
+    message = await update.message.reply_text(
+        menu_text,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+    
+    # Store message ID for later cleanup
+    if not context.user_data.get('menu_messages'):
+        context.user_data['menu_messages'] = []
+    context.user_data['menu_messages'].append((chat_id_from_update(update), message.message_id))
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for the /help command"""
     await show_help_menu(update, context)
 
 async def show_help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show the help menu with information"""
+    """Show help information with a back button"""
     user = update.effective_user
     
-    # Base help text for all users
+    # Base commands for all users
     help_text = (
-        "📋 *Справка по командам:*\n\n"
-        "• *Проверка данных* — отправьте боту текст или нажмите на кнопку \"Проверить в списке\"\n"
-        "• /start — показать главное меню\n"
-        "• /help — показать эту справку\n"
+        "*📚 Справка по командам*\n\n"
+        "*Основные команды:*\n"
+        "• /start - Начать работу с ботом\n"
+        "• /help - Показать эту справку\n"
+        "• /check - Проверить значение в базе данных\n"
+        "• /menu - Открыть главное меню\n"
     )
     
     # Add admin commands if user is admin
     if user.id in ADMIN_IDS:
         help_text += (
             "\n*Команды администратора:*\n"
-            "• /add <значение> — добавить значение в базу\n"
-            "• /remove <значение> — удалить значение из базы\n"
-            "• /list — показать все значения\n"
-            "• /broadcast — отправить сообщение всем пользователям\n"
-            "• /stats — показать статистику\n"
+            "• /admin - Панель администратора\n"
+            "• /add - Добавить значение в базу данных\n"
+            "• /remove - Удалить значение из базы данных\n"
+            "• /list - Показать все значения в базе данных\n"
+            "• /broadcast - Отправить сообщение всем пользователям\n"
+            "• /stats - Показать статистику бота\n"
         )
     
-    # Back button
-    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")]]
+    # Add back button
+    keyboard = [[InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Send or edit message
     if update.callback_query:
+        # Edit message if callback query
         await update.callback_query.edit_message_text(
             help_text,
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
     else:
-        # Clean up previous menu messages
-        await clean_previous_menus(update, context)
-        message = await update.message.reply_text(
+        # Send new message if command
+        await update.message.reply_text(
             help_text,
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
-        # Store message ID
-        if not context.user_data.get('menu_messages'):
-            context.user_data['menu_messages'] = []
-        context.user_data['menu_messages'].append((chat_id_from_update(update), message.message_id))
 
 async def show_check_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show the check value prompt"""
@@ -702,58 +716,6 @@ def chat_id_from_update(update: Update) -> int:
         # Fallback - should not happen in normal operation
         return 0
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle all button callbacks"""
-    query = update.callback_query
-    await query.answer()
-    
-    # Update user activity
-    db.update_user_activity(query.from_user.id)
-    
-    # Log button event
-    db.log_event("button_click", query.from_user.id, {"button": query.data})
-    
-    # Main menu options
-    if query.data == "back_to_main" or query.data == "menu_main":
-        await show_main_menu(update, context)
-    elif query.data == "menu_check":
-        result = await show_check_menu(update, context)
-        context.user_data['expecting_check'] = True
-    elif query.data == "menu_help":
-        await show_help_menu(update, context)
-    elif query.data == "menu_admin":
-        await show_admin_menu(update, context)
-    
-    # Admin panel options
-    elif query.data == "admin_add":
-        result = await show_add_menu(update, context)
-        context.user_data['expecting_add'] = True
-    elif query.data == "admin_remove":
-        result = await show_remove_menu(update, context)
-        context.user_data['expecting_remove'] = True
-    elif query.data == "admin_list":
-        await show_list_menu(update, context)
-    elif query.data == "admin_stats":
-        await show_stats_menu(update, context)
-    elif query.data == "admin_broadcast":
-        await query.edit_message_text(
-            "Для начала рассылки используйте команду /broadcast",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("◀️ Назад", callback_data="menu_admin")
-            ]])
-        )
-    
-    # Whitelist pagination
-    elif query.data in ["whitelist_next", "whitelist_prev"]:
-        await handle_whitelist_pagination(update, context)
-    elif query.data == "whitelist_info":
-        # Just acknowledge the button press without doing anything
-        pass
-    
-    # Broadcast cancel
-    elif query.data == "broadcast_cancel":
-        await cancel_broadcast(update, context)
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for processing all non-command messages"""
     if not update.message or not update.message.text:
@@ -774,10 +736,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     elif context.user_data.get('expecting_remove'):
         context.user_data['expecting_remove'] = False
         await handle_remove_value(update, context)
+    elif context.user_data.get('expecting_broadcast'):
+        context.user_data['expecting_broadcast'] = False
+        await start_broadcast_process(update, context)
     else:
         # Normal message handling - check whitelist
         if db.check_whitelist(text):
-            keyboard = [[InlineKeyboardButton("◀️ Назад в меню", callback_data="back_to_main")]]
+            keyboard = [
+                [InlineKeyboardButton("🔍 Проверить другое значение", callback_data="action_check")],
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
+            ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await update.message.reply_text(
@@ -787,8 +755,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
         else:
             keyboard = [
-                [InlineKeyboardButton("🔍 Проверить другое значение", callback_data="menu_check")],
-                [InlineKeyboardButton("◀️ Назад в меню", callback_data="back_to_main")]
+                [InlineKeyboardButton("🔍 Проверить другое значение", callback_data="action_check")],
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
@@ -797,6 +765,244 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle button callbacks from inline keyboards"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Extract the callback data
+    data = query.data
+    
+    # Main menu actions
+    if data == "action_check":
+        await show_check_menu(update, context)
+    elif data == "action_help":
+        await show_help_menu(update, context)
+    # Admin menu navigation
+    elif data == "menu_admin":
+        await show_admin_menu(update, context)
+    elif data == "back_to_main":
+        # Back to main menu
+        await edit_to_main_menu(update, context)
+    # Admin actions
+    elif data == "admin_add":
+        await show_add_menu(update, context)
+    elif data == "admin_remove":
+        await show_remove_menu(update, context)
+    elif data == "admin_list":
+        await show_list_menu(update, context)
+    elif data == "admin_broadcast":
+        await show_broadcast_menu(update, context)
+    elif data == "admin_stats":
+        await show_stats_menu(update, context)
+    # Broadcast actions
+    elif data == "broadcast_cancel":
+        await cancel_broadcast(update, context)
+    elif data == "start_broadcast":
+        await start_broadcast_from_button(update, context)
+    # Other callbacks
+    elif data.startswith("remove_"):
+        # Extract the value to remove
+        value_to_remove = data[7:]  # Remove "remove_" prefix
+        success = db.remove_from_whitelist(value_to_remove)
+        
+        if success:
+            await query.edit_message_text(f"Значение '{value_to_remove}' успешно удалено из вайтлиста.")
+        else:
+            await query.edit_message_text(f"Не удалось удалить значение '{value_to_remove}' из вайтлиста.")
+        
+        # Add a button to go back to admin menu
+        keyboard = [[InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_reply_markup(reply_markup)
+
+async def edit_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Edit the current message to show the main menu"""
+    query = update.callback_query
+    user = update.effective_user
+    
+    # Create keyboard with main options
+    keyboard = []
+    
+    # Add primary actions row
+    keyboard.append([
+        InlineKeyboardButton("🔍 Проверить значение", callback_data="action_check"),
+        InlineKeyboardButton("❓ Помощь", callback_data="action_help")
+    ])
+    
+    # Add admin panel row for admins
+    if user.id in ADMIN_IDS:
+        keyboard.append([
+            InlineKeyboardButton("👑 Панель администратора", callback_data="menu_admin")
+        ])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Menu title and description
+    menu_text = (
+        "*🤖 Главное меню MegaBuddies*\n\n"
+        "Выберите действие из меню ниже.\n"
+        "• Используйте _Проверить значение_ для проверки информации в вайтлисте\n"
+        "• Используйте _Помощь_ для получения информации о командах\n"
+    )
+    
+    if user.id in ADMIN_IDS:
+        menu_text += "• Используйте _Панель администратора_ для доступа к админ-функциям\n"
+    
+    menu_text += "\n💡 Совет: В любой момент введите /menu для возврата в это меню"
+    
+    # Edit the message
+    await query.edit_message_text(
+        menu_text,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def show_broadcast_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show menu for broadcast with options"""
+    user = update.effective_user
+    
+    if user.id not in ADMIN_IDS:
+        if update.callback_query:
+            await update.callback_query.answer("У вас нет прав доступа к этому разделу.")
+        return
+    
+    # Instructions for broadcast
+    broadcast_text = (
+        "*📣 Рассылка сообщений*\n\n"
+        "Для отправки сообщения всем пользователям бота, "
+        "выберите 'Начать рассылку' и введите текст сообщения.\n\n"
+        "После отправки текста сообщения, бот начнет рассылку."
+    )
+    
+    # Add buttons
+    keyboard = [
+        [InlineKeyboardButton("✉️ Начать рассылку", callback_data="start_broadcast")],
+        [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if update.callback_query:
+        # Edit message if callback query
+        await update.callback_query.edit_message_text(
+            broadcast_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    else:
+        # Send new message if command
+        await update.message.reply_text(
+            broadcast_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
+async def start_broadcast_from_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Start broadcast process from button click"""
+    query = update.callback_query
+    user = update.effective_user
+    
+    if user.id not in ADMIN_IDS:
+        await query.answer("У вас нет прав доступа к этому разделу.")
+        return
+    
+    # Show message asking for broadcast text
+    await query.edit_message_text(
+        "*📣 Введите текст сообщения для рассылки:*\n\n"
+        "Отправьте текст сообщения, которое будет разослано всем пользователям.",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Отменить", callback_data="broadcast_cancel")
+        ]])
+    )
+    
+    # Set context variable to expect broadcast message
+    context.user_data['expecting_broadcast'] = True
+
+async def start_broadcast_process(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Process broadcast message and start sending"""
+    message_text = update.message.text
+    user = update.effective_user
+    
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text("У вас нет прав доступа к этому разделу.")
+        return
+    
+    # Validate message
+    if not message_text or len(message_text.strip()) == 0:
+        await update.message.reply_text(
+            "Пожалуйста, отправьте непустое текстовое сообщение для рассылки.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")
+            ]])
+        )
+        return
+    
+    # Get users for broadcasting
+    users = db.get_all_users()
+    
+    if not users:
+        await update.message.reply_text(
+            "В базе нет пользователей для рассылки.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")
+            ]])
+        )
+        return
+    
+    # Start broadcast
+    status_message = await update.message.reply_text(
+        f"🔄 Начинаю рассылку для {len(users)} пользователей...\n\n"
+        f"Это может занять некоторое время."
+    )
+    
+    # Send messages
+    success_count = 0
+    fail_count = 0
+    
+    for i, (user_id, chat_id) in enumerate(users):
+        try:
+            # Send the message
+            await context.bot.send_message(
+                chat_id=chat_id, 
+                text=message_text,
+                disable_notification=False
+            )
+            success_count += 1
+            
+            # Update status message every 10 users
+            if (i+1) % 10 == 0 or i+1 == len(users):
+                await status_message.edit_text(
+                    f"🔄 Рассылка: {i+1}/{len(users)} пользователей...\n"
+                    f"✅ Успешно: {success_count}\n"
+                    f"❌ Ошибок: {fail_count}"
+                )
+            
+            # Add a small delay to avoid hitting rate limits
+            await asyncio.sleep(0.05)
+        except Exception as e:
+            logger.error(f"Failed to send message to user {user_id}: {e}")
+            fail_count += 1
+    
+    # Final status
+    await status_message.edit_text(
+        f"✅ Рассылка завершена!\n\n"
+        f"📊 Статистика:\n"
+        f"• Всего пользователей: {len(users)}\n"
+        f"• Успешно отправлено: {success_count}\n"
+        f"• Ошибок: {fail_count}",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")
+        ]])
+    )
+    
+    # Log broadcast event
+    db.log_event("broadcast", user.id, {
+        "total": len(users),
+        "success": success_count,
+        "fail": fail_count
+    })
 
 def main() -> None:
     """Start the bot"""
@@ -834,7 +1040,8 @@ def main() -> None:
         },
         fallbacks=[CallbackQueryHandler(button_callback)],
         name="check_conversation",
-        persistent=False
+        persistent=False,
+        per_message=True
     )
     application.add_handler(check_conv_handler)
     
@@ -846,7 +1053,8 @@ def main() -> None:
         },
         fallbacks=[CallbackQueryHandler(button_callback)],
         name="add_conversation",
-        persistent=False
+        persistent=False,
+        per_message=True
     )
     application.add_handler(add_conv_handler)
     
@@ -858,7 +1066,8 @@ def main() -> None:
         },
         fallbacks=[CallbackQueryHandler(button_callback)],
         name="remove_conversation",
-        persistent=False
+        persistent=False,
+        per_message=True
     )
     application.add_handler(remove_conv_handler)
     
@@ -870,7 +1079,8 @@ def main() -> None:
         },
         fallbacks=[CallbackQueryHandler(cancel_broadcast, pattern="^broadcast_cancel$")],
         name="broadcast_conversation",
-        persistent=False
+        persistent=False,
+        per_message=True
     )
     application.add_handler(broadcast_conv_handler)
     
@@ -879,6 +1089,45 @@ def main() -> None:
     
     # Add message handler
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Set up the menu commands
+    async def setup_commands():
+        bot = application.bot
+        commands = [
+            BotCommand("start", "Начать работу с ботом"),
+            BotCommand("help", "Показать справку"),
+            BotCommand("check", "Проверить значение в списке"),
+            BotCommand("menu", "Открыть главное меню")
+        ]
+        
+        # Add admin commands for admin users only
+        admin_commands = commands + [
+            BotCommand("admin", "Панель администратора"),
+            BotCommand("add", "Добавить значение в список"),
+            BotCommand("remove", "Удалить значение из списка"),
+            BotCommand("list", "Показать все значения в списке"),
+            BotCommand("broadcast", "Отправить сообщение всем пользователям"),
+            BotCommand("stats", "Показать статистику бота")
+        ]
+        
+        # Set regular commands for all users
+        await bot.set_my_commands(commands)
+        
+        # Set admin commands for admin users
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.set_my_commands(
+                    admin_commands,
+                    scope=BotCommandScopeChat(chat_id=admin_id)
+                )
+            except Exception as e:
+                logger.error(f"Failed to set admin commands for user {admin_id}: {e}")
+    
+    # Run the setup_commands function on startup
+    application.post_init = setup_commands
+    
+    # Add command handler for menu command
+    application.add_handler(CommandHandler("menu", show_main_menu))
     
     # Start the Bot
     logger.info("Starting bot...")
