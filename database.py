@@ -6,6 +6,7 @@ class Database:
     def __init__(self, db_name: str = "mega_buddies.db"):
         self.db_name = db_name
         self._create_tables()
+        self._migrate_database()
 
     def _create_tables(self):
         """Create necessary tables if they don't exist"""
@@ -28,8 +29,7 @@ class Database:
             first_name TEXT,
             last_name TEXT,
             chat_id INTEGER UNIQUE,
-            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         ''')
         
@@ -47,6 +47,32 @@ class Database:
         ''')
         
         conn.commit()
+        conn.close()
+    
+    def _migrate_database(self):
+        """Check and update database schema if needed"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        
+        # Check if last_activity column exists in users table
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [column[1] for column in cursor.fetchall()]
+        
+        # Add last_activity column if it doesn't exist
+        if 'last_activity' not in columns:
+            print("Migrating database: Adding last_activity column to users table")
+            cursor.execute('''
+            ALTER TABLE users
+            ADD COLUMN last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ''')
+            
+            # Update existing users with current timestamp
+            cursor.execute('''
+            UPDATE users SET last_activity = CURRENT_TIMESTAMP
+            ''')
+            
+            conn.commit()
+        
         conn.close()
 
     def add_to_whitelist(self, value: str) -> bool:
@@ -130,8 +156,8 @@ class Database:
                 # Insert new user
                 cursor.execute("""
                     INSERT INTO users 
-                    (user_id, username, first_name, last_name, chat_id) 
-                    VALUES (?, ?, ?, ?, ?)
+                    (user_id, username, first_name, last_name, chat_id, last_activity) 
+                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """, (user_id, username, first_name, last_name, chat_id))
                 
                 # Log new user event
@@ -192,15 +218,22 @@ class Database:
     
     def get_active_users_count(self, days: int = 7) -> int:
         """Get the number of active users in the last N days"""
-        conn = sqlite3.connect(self.db_name)
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT COUNT(*) FROM users 
-            WHERE last_activity >= datetime('now', ?)
-        """, (f'-{days} days',))
-        result = cursor.fetchone()[0]
-        conn.close()
-        return result
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COUNT(*) FROM users 
+                WHERE last_activity >= datetime('now', ?)
+            """, (f'-{days} days',))
+            result = cursor.fetchone()[0]
+            conn.close()
+            return result
+        except sqlite3.OperationalError as e:
+            # If the column doesn't exist, return total users count as fallback
+            if "no such column: last_activity" in str(e):
+                print("Warning: last_activity column not found, returning total users count instead")
+                return self.get_users_count()
+            raise
     
     def log_event(self, event_type: str, user_id: Optional[int], data: dict = None, success: bool = True) -> bool:
         """Log an event for statistics"""
@@ -245,55 +278,68 @@ class Database:
     
     def get_stats(self) -> Dict[str, Any]:
         """Get comprehensive statistics"""
-        stats = {
-            "users": {
-                "total": self.get_users_count(),
-                "new_7d": self.get_new_users_count(7),
-                "new_1d": self.get_new_users_count(1),
-                "active_7d": self.get_active_users_count(7)
-            },
-            "whitelist": {
-                "total": self.get_whitelist_count()
-            },
-            "checks": {
-                "total_7d": self.get_event_count("check", 7),
-                "successful_7d": self.get_event_count("check", 7, True),
-                "failed_7d": self.get_event_count("check", 7, False),
-                "total_1d": self.get_event_count("check", 1),
-                "successful_1d": self.get_event_count("check", 1, True),
-                "failed_1d": self.get_event_count("check", 1, False)
-            },
-            "daily_activity": self.get_daily_activity()
-        }
-        return stats
+        try:
+            stats = {
+                "users": {
+                    "total": self.get_users_count(),
+                    "new_7d": self.get_new_users_count(7),
+                    "new_1d": self.get_new_users_count(1),
+                    "active_7d": self.get_active_users_count(7)
+                },
+                "whitelist": {
+                    "total": self.get_whitelist_count()
+                },
+                "checks": {
+                    "total_7d": self.get_event_count("check", 7),
+                    "successful_7d": self.get_event_count("check", 7, True),
+                    "failed_7d": self.get_event_count("check", 7, False),
+                    "total_1d": self.get_event_count("check", 1),
+                    "successful_1d": self.get_event_count("check", 1, True),
+                    "failed_1d": self.get_event_count("check", 1, False)
+                },
+                "daily_activity": self.get_daily_activity()
+            }
+            return stats
+        except Exception as e:
+            print(f"Error getting stats: {e}")
+            # Return basic stats in case of error
+            return {
+                "users": {"total": self.get_users_count()},
+                "whitelist": {"total": self.get_whitelist_count()},
+                "error": str(e)
+            }
     
     def get_daily_activity(self) -> Dict[str, int]:
         """Get activity count by day of week for the last 30 days"""
-        conn = sqlite3.connect(self.db_name)
-        cursor = conn.cursor()
-        
-        # SQLite's strftime('%w') returns 0-6 with 0 being Sunday
-        cursor.execute("""
-            SELECT 
-                CASE strftime('%w', timestamp)
-                    WHEN '0' THEN 'Воскресенье'
-                    WHEN '1' THEN 'Понедельник'
-                    WHEN '2' THEN 'Вторник'
-                    WHEN '3' THEN 'Среда'
-                    WHEN '4' THEN 'Четверг'
-                    WHEN '5' THEN 'Пятница'
-                    WHEN '6' THEN 'Суббота'
-                END as day_of_week,
-                COUNT(*) as count
-            FROM events
-            WHERE timestamp >= datetime('now', '-30 days')
-            GROUP BY day_of_week
-            ORDER BY strftime('%w', timestamp)
-        """)
-        
-        result = cursor.fetchall()
-        conn.close()
-        
-        # Convert to dictionary
-        activity_by_day = {day: count for day, count in result}
-        return activity_by_day 
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            # SQLite's strftime('%w') returns 0-6 with 0 being Sunday
+            cursor.execute("""
+                SELECT 
+                    CASE strftime('%w', timestamp)
+                        WHEN '0' THEN 'Воскресенье'
+                        WHEN '1' THEN 'Понедельник'
+                        WHEN '2' THEN 'Вторник'
+                        WHEN '3' THEN 'Среда'
+                        WHEN '4' THEN 'Четверг'
+                        WHEN '5' THEN 'Пятница'
+                        WHEN '6' THEN 'Суббота'
+                    END as day_of_week,
+                    COUNT(*) as count
+                FROM events
+                WHERE timestamp >= datetime('now', '-30 days')
+                GROUP BY day_of_week
+                ORDER BY strftime('%w', timestamp)
+            """)
+            
+            result = cursor.fetchall()
+            conn.close()
+            
+            # Convert to dictionary
+            activity_by_day = {day: count for day, count in result}
+            return activity_by_day
+        except Exception as e:
+            print(f"Error getting daily activity: {e}")
+            return {} 

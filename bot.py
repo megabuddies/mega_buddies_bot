@@ -274,40 +274,63 @@ async def show_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.message.reply_text("У вас нет прав доступа к этому разделу.")
         return
     
-    # Get stats from database
-    stats = db.get_stats()
-    
-    # Format statistics message
-    stats_text = (
-        "*📊 Статистика бота*\n\n"
+    try:
+        # Get stats from database
+        stats = db.get_stats()
         
-        "*👥 Пользователи:*\n"
-        f"• Всего: {stats['users']['total']}\n"
-        f"• Новых за 7 дней: {stats['users']['new_7d']}\n"
-        f"• Новых за 24 часа: {stats['users']['new_1d']}\n"
-        f"• Активных за 7 дней: {stats['users']['active_7d']}\n\n"
+        # Format statistics message
+        stats_text = (
+            "*📊 Статистика бота*\n\n"
+            
+            "*👥 Пользователи:*\n"
+            f"• Всего: {stats['users']['total']}\n"
+        )
         
-        "*📋 База данных:*\n"
-        f"• Записей в вайтлисте: {stats['whitelist']['total']}\n\n"
+        # Add additional user stats if available
+        if 'new_7d' in stats['users']:
+            stats_text += f"• Новых за 7 дней: {stats['users']['new_7d']}\n"
+        if 'new_1d' in stats['users']:
+            stats_text += f"• Новых за 24 часа: {stats['users']['new_1d']}\n"
+        if 'active_7d' in stats['users']:
+            stats_text += f"• Активных за 7 дней: {stats['users']['active_7d']}\n"
         
-        "*🔍 Проверки:*\n"
-        f"• За 7 дней: {stats['checks']['total_7d']}\n"
-        f"  ✅ Успешных: {stats['checks']['successful_7d']}\n"
-        f"  ❌ Неудачных: {stats['checks']['failed_7d']}\n"
-        f"• За 24 часа: {stats['checks']['total_1d']}\n"
-        f"  ✅ Успешных: {stats['checks']['successful_1d']}\n"
-        f"  ❌ Неудачных: {stats['checks']['failed_1d']}\n\n"
+        stats_text += f"\n*📋 База данных:*\n"
+        stats_text += f"• Записей в вайтлисте: {stats['whitelist']['total']}\n\n"
         
-        "*📅 Активность по дням:*\n"
-    )
-    
-    # Add daily activity if available
-    daily_activity = stats.get('daily_activity', {})
-    if daily_activity:
-        for day, count in daily_activity.items():
-            stats_text += f"• {day}: {count}\n"
-    else:
-        stats_text += "Нет данных\n"
+        # Add check stats if available
+        if 'checks' in stats:
+            stats_text += (
+                "*🔍 Проверки:*\n"
+                f"• За 7 дней: {stats['checks'].get('total_7d', 0)}\n"
+                f"  ✅ Успешных: {stats['checks'].get('successful_7d', 0)}\n"
+                f"  ❌ Неудачных: {stats['checks'].get('failed_7d', 0)}\n"
+                f"• За 24 часа: {stats['checks'].get('total_1d', 0)}\n"
+                f"  ✅ Успешных: {stats['checks'].get('successful_1d', 0)}\n"
+                f"  ❌ Неудачных: {stats['checks'].get('failed_1d', 0)}\n\n"
+            )
+        
+        # Add daily activity if available
+        stats_text += "*📅 Активность по дням:*\n"
+        daily_activity = stats.get('daily_activity', {})
+        if daily_activity:
+            for day, count in daily_activity.items():
+                stats_text += f"• {day}: {count}\n"
+        else:
+            stats_text += "Нет данных\n"
+        
+        # Add error info if present
+        if 'error' in stats:
+            stats_text += f"\n⚠️ *Примечание:* Данные могут быть неполными ({stats['error']})\n"
+        
+    except Exception as e:
+        # Fallback message if stats generation fails
+        logger.error(f"Error generating stats: {e}")
+        stats_text = (
+            "*📊 Статистика бота*\n\n"
+            "⚠️ Произошла ошибка при получении статистики.\n"
+            f"Детали ошибки: {str(e)}\n\n"
+            "Попробуйте позже или обратитесь к разработчику."
+        )
     
     # Back buttons
     keyboard = [
@@ -783,6 +806,16 @@ def main() -> None:
         logger.error("No BOT_TOKEN found in environment variables!")
         return
     
+    # Initialize database
+    try:
+        logger.info("Initializing database...")
+        global db
+        db = Database()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Error initializing database: {e}")
+        return
+    
     # Create the Application
     application = Application.builder().token(token).build()
     
@@ -848,9 +881,10 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Start the Bot
+    logger.info("Starting bot...")
     application.run_polling()
     
-    logger.info("Bot started")
+    logger.info("Bot stopped")
 
 if __name__ == "__main__":
     main() 
