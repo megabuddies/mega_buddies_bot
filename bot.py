@@ -192,8 +192,8 @@ async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Use update_or_send_message instead of creating a new message
-    await update_or_send_message(
+    # Use delete_and_update_message instead of update_or_send_message
+    await delete_and_update_message(
         update, 
         context,
         message_text,
@@ -378,8 +378,8 @@ async def handle_add_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Use update_or_send_message instead of creating a new message
-    await update_or_send_message(
+    # Use delete_and_update_message instead
+    await delete_and_update_message(
         update,
         context,
         message_text,
@@ -431,8 +431,8 @@ async def handle_remove_value(update: Update, context: ContextTypes.DEFAULT_TYPE
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Use update_or_send_message instead of creating a new message
-    await update_or_send_message(
+    # Use delete_and_update_message instead
+    await delete_and_update_message(
         update,
         context,
         message_text,
@@ -564,6 +564,15 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     
     # Log broadcast event
     db.log_event("broadcast", update.effective_user.id, {"message_length": len(message_text)})
+    
+    # Try to delete the user's input message
+    try:
+        await context.bot.delete_message(
+            chat_id=update.message.chat_id,
+            message_id=update.message.message_id
+        )
+    except Exception as e:
+        logger.debug(f"Could not delete user message: {e}")
     
     progress_message = await update.message.reply_text(f"Начинаю рассылку для {len(users)} пользователей...")
     
@@ -781,7 +790,7 @@ async def show_persistent_keyboard(update: Update, context: ContextTypes.DEFAULT
     
     # Add common actions
     keyboard.append(["🔍 Проверить", "❓ Помощь"])
-    keyboard.append(["🏠 Главное меню", "🔄 Обновить"])
+    keyboard.append(["🏠 Главное меню"])
     
     # Add admin row if user is admin
     if user.id in ADMIN_IDS:
@@ -799,26 +808,43 @@ async def show_persistent_keyboard(update: Update, context: ContextTypes.DEFAULT
     # Send new message with keyboard
     if update.message:
         message = await update.message.reply_text(
-            "Клавиатура обновлена. Используйте её для быстрого доступа к функциям бота:",
+            "Используйте клавиатуру для быстрого доступа к функциям бота.",
             reply_markup=reply_markup
         )
     elif update.callback_query:
         message = await context.bot.send_message(
             chat_id=update.callback_query.message.chat_id,
-            text="Клавиатура обновлена. Используйте её для быстрого доступа к функциям бота:",
+            text="Используйте клавиатуру для быстрого доступа к функциям бота.",
             reply_markup=reply_markup
         )
     else:
         message = await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="Клавиатура обновлена. Используйте её для быстрого доступа к функциям бота:",
+            text="Используйте клавиатуру для быстрого доступа к функциям бота.",
             reply_markup=reply_markup
         )
 
-# Add command handler for refresh_keyboard command
-async def refresh_keyboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler for the command to refresh the persistent keyboard"""
-    await show_persistent_keyboard(update, context)
+# Add function to delete user message and update or send message
+async def delete_and_update_message(
+    update: Update, 
+    context: ContextTypes.DEFAULT_TYPE, 
+    text: str, 
+    reply_markup=None, 
+    parse_mode=None
+) -> None:
+    """Delete user message, update existing menu message or send a new one"""
+    # Try to delete the user's message if possible
+    if update.message:
+        try:
+            await context.bot.delete_message(
+                chat_id=update.message.chat_id,
+                message_id=update.message.message_id
+            )
+        except Exception as e:
+            logger.debug(f"Could not delete user message: {e}")
+    
+    # Now update or send a new message
+    await update_or_send_message(update, context, text, reply_markup, parse_mode)
 
 # Add function to save active message
 async def save_active_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message) -> None:
@@ -913,9 +939,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     elif text == "🏠 Главное меню":
         await show_main_menu(update, context)
         return
-    elif text == "🔄 Обновить":
-        await show_persistent_keyboard(update, context)
-        return
     elif text == "👑 Админ-панель" and update.effective_user.id in ADMIN_IDS:
         await show_admin_menu(update, context)
         return
@@ -945,7 +968,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await update_or_send_message(
+            # Use delete_and_update_message instead
+            await delete_and_update_message(
                 update,
                 context,
                 f"✅ Значение \"{text}\" *найдено* в вайтлисте!",
@@ -959,7 +983,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await update_or_send_message(
+            # Use delete_and_update_message instead
+            await delete_and_update_message(
                 update,
                 context,
                 f"❌ Значение \"{text}\" *не найдено* в вайтлисте.",
@@ -1018,8 +1043,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         keyboard = [[InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Use update_or_send_message instead of direct edit
-        await update_or_send_message(
+        # Use delete_and_update_message instead of direct edit
+        await delete_and_update_message(
             update,
             context,
             message_text,
@@ -1119,8 +1144,7 @@ def main() -> None:
             BotCommand("start", "Начать работу с ботом"),
             BotCommand("help", "Показать справку"),
             BotCommand("check", "Проверить значение в списке"),
-            BotCommand("menu", "Открыть главное меню"),
-            BotCommand("keyboard", "Показать/обновить клавиатуру")
+            BotCommand("menu", "Открыть главное меню")
         ]
         
         # Add admin commands for admin users only
@@ -1151,9 +1175,6 @@ def main() -> None:
     
     # Add command handler for menu command
     application.add_handler(CommandHandler("menu", show_main_menu))
-    
-    # Add command handler for keyboard refresh
-    application.add_handler(CommandHandler("keyboard", refresh_keyboard_command))
     
     # Start the Bot
     logger.info("Starting bot...")
