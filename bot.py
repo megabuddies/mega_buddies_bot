@@ -58,8 +58,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Log the event
     db.log_event("start", user.id)
     
-    # Create main menu
+    # Show main menu with inline buttons
     await show_main_menu(update, context)
+    
+    # Also show persistent keyboard at bottom
+    await show_persistent_keyboard(update, context)
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show the main menu with inline buttons"""
@@ -726,6 +729,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     text = update.message.text.strip()
     
+    # Handle button presses from persistent keyboard
+    if text == "🔍 Проверить":
+        await show_check_menu(update, context)
+        return
+    elif text == "❓ Помощь":
+        await show_help_menu(update, context)
+        return
+    elif text == "🏠 Главное меню":
+        await show_main_menu(update, context)
+        return
+    elif text == "🔄 Обновить":
+        await show_persistent_keyboard(update, context)
+        return
+    elif text == "👑 Админ-панель" and update.effective_user.id in ADMIN_IDS:
+        await show_admin_menu(update, context)
+        return
+    elif text == "📊 Статистика" and update.effective_user.id in ADMIN_IDS:
+        await show_stats_menu(update, context)
+        return
+    
     # Handle different conversation states
     if context.user_data.get('expecting_check'):
         context.user_data['expecting_check'] = False
@@ -1004,6 +1027,47 @@ async def start_broadcast_process(update: Update, context: ContextTypes.DEFAULT_
         "fail": fail_count
     })
 
+async def show_persistent_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show a persistent keyboard at the bottom of the chat"""
+    user = update.effective_user
+    
+    # Create keyboard buttons
+    keyboard = []
+    
+    # Add common actions
+    keyboard.append(["🔍 Проверить", "❓ Помощь"])
+    keyboard.append(["🏠 Главное меню", "🔄 Обновить"])
+    
+    # Add admin row if user is admin
+    if user.id in ADMIN_IDS:
+        keyboard.append(["👑 Админ-панель", "📊 Статистика"])
+    
+    # Create the reply markup with the keyboard
+    reply_markup = ReplyKeyboardMarkup(
+        keyboard,
+        resize_keyboard=True,      # Make the keyboard smaller
+        one_time_keyboard=False,   # Keep the keyboard visible after selection
+        selective=False            # Show to all users in the chat
+    )
+    
+    # Send with a simple message (or update existing message)
+    if update.callback_query:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="Меню бота обновлено. Теперь вы можете использовать кнопки внизу для быстрого доступа.",
+            reply_markup=reply_markup
+        )
+    else:
+        await update.message.reply_text(
+            "Воспользуйтесь кнопками для управления ботом:",
+            reply_markup=reply_markup
+        )
+
+# Add command handler for refresh_keyboard command
+async def refresh_keyboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler for the command to refresh the persistent keyboard"""
+    await show_persistent_keyboard(update, context)
+
 def main() -> None:
     """Start the bot"""
     # Get the bot token from environment variables
@@ -1097,7 +1161,8 @@ def main() -> None:
             BotCommand("start", "Начать работу с ботом"),
             BotCommand("help", "Показать справку"),
             BotCommand("check", "Проверить значение в списке"),
-            BotCommand("menu", "Открыть главное меню")
+            BotCommand("menu", "Открыть главное меню"),
+            BotCommand("keyboard", "Показать/обновить клавиатуру")
         ]
         
         # Add admin commands for admin users only
@@ -1128,6 +1193,9 @@ def main() -> None:
     
     # Add command handler for menu command
     application.add_handler(CommandHandler("menu", show_main_menu))
+    
+    # Add command handler for keyboard refresh
+    application.add_handler(CommandHandler("keyboard", refresh_keyboard_command))
     
     # Start the Bot
     logger.info("Starting bot...")
