@@ -75,7 +75,7 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def add_to_whitelist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Admin handler to add a value to the whitelist"""
     # Check if user is admin (Add your admin user IDs here)
-    admin_ids = [123456789]  # Replace with actual admin user IDs
+    admin_ids = [6327617477]  # Replace with actual admin user IDs
     if update.effective_user.id not in admin_ids:
         await update.message.reply_text("У вас нет прав для использования этой команды.")
         return
@@ -93,7 +93,7 @@ async def add_to_whitelist(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def remove_from_whitelist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Admin handler to remove a value from the whitelist"""
     # Check if user is admin
-    admin_ids = [123456789]  # Replace with actual admin user IDs
+    admin_ids = [6327617477]  # Replace with actual admin user IDs
     if update.effective_user.id not in admin_ids:
         await update.message.reply_text("У вас нет прав для использования этой команды.")
         return
@@ -111,7 +111,7 @@ async def remove_from_whitelist(update: Update, context: ContextTypes.DEFAULT_TY
 async def list_whitelist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Admin handler to list all values in the whitelist"""
     # Check if user is admin
-    admin_ids = [123456789]  # Replace with actual admin user IDs
+    admin_ids = [6327617477]  # Replace with actual admin user IDs
     if update.effective_user.id not in admin_ids:
         await update.message.reply_text("У вас нет прав для использования этой команды.")
         return
@@ -127,7 +127,7 @@ async def list_whitelist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Admin handler to broadcast a message to all users"""
     # Check if user is admin
-    admin_ids = [123456789]  # Replace with actual admin user IDs
+    admin_ids = [6327617477]  # Replace with actual admin user IDs
     if update.effective_user.id not in admin_ids:
         await update.message.reply_text("У вас нет прав для использования этой команды.")
         return
