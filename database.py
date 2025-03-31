@@ -29,7 +29,7 @@ class Database:
             first_name TEXT,
             last_name TEXT,
             chat_id INTEGER UNIQUE,
-            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            joined_at TIMESTAMP DEFAULT (datetime('now'))
         )
         ''')
         
@@ -39,7 +39,7 @@ class Database:
             id INTEGER PRIMARY KEY,
             event_type TEXT NOT NULL,
             user_id INTEGER,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            timestamp TIMESTAMP DEFAULT (datetime('now')),
             data TEXT,
             success INTEGER DEFAULT 0,
             FOREIGN KEY (user_id) REFERENCES users (user_id)
@@ -61,17 +61,23 @@ class Database:
         # Add last_activity column if it doesn't exist
         if 'last_activity' not in columns:
             print("Migrating database: Adding last_activity column to users table")
-            cursor.execute('''
-            ALTER TABLE users
-            ADD COLUMN last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            ''')
-            
-            # Update existing users with current timestamp
-            cursor.execute('''
-            UPDATE users SET last_activity = CURRENT_TIMESTAMP
-            ''')
-            
-            conn.commit()
+            try:
+                # Add column without default value
+                cursor.execute('''
+                ALTER TABLE users
+                ADD COLUMN last_activity TIMESTAMP
+                ''')
+                
+                # Update existing users with current timestamp
+                cursor.execute('''
+                UPDATE users SET last_activity = datetime('now')
+                ''')
+                
+                conn.commit()
+                print("Migration completed successfully")
+            except Exception as e:
+                print(f"Error during migration: {e}")
+                conn.rollback()
         
         conn.close()
 
@@ -149,7 +155,7 @@ class Database:
                 # Update existing user's last activity
                 cursor.execute("""
                     UPDATE users 
-                    SET username = ?, first_name = ?, last_name = ?, chat_id = ?, last_activity = CURRENT_TIMESTAMP
+                    SET username = ?, first_name = ?, last_name = ?, chat_id = ?, last_activity = datetime('now')
                     WHERE user_id = ?
                 """, (username, first_name, last_name, chat_id, user_id))
             else:
@@ -157,7 +163,7 @@ class Database:
                 cursor.execute("""
                     INSERT INTO users 
                     (user_id, username, first_name, last_name, chat_id, last_activity) 
-                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    VALUES (?, ?, ?, ?, ?, datetime('now'))
                 """, (user_id, username, first_name, last_name, chat_id))
                 
                 # Log new user event
@@ -176,7 +182,7 @@ class Database:
             conn = sqlite3.connect(self.db_name)
             cursor = conn.cursor()
             cursor.execute("""
-                UPDATE users SET last_activity = CURRENT_TIMESTAMP
+                UPDATE users SET last_activity = datetime('now')
                 WHERE user_id = ?
             """, (user_id,))
             conn.commit()
@@ -246,7 +252,7 @@ class Database:
             
             cursor.execute("""
                 INSERT INTO events (event_type, user_id, data, success, timestamp)
-                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, datetime('now'))
             """, (event_type, user_id, data_str, 1 if success else 0))
             
             conn.commit()
