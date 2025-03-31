@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 db = Database()
 
 # Admin IDs - replace with actual admin user IDs
-ADMIN_IDS = [123456789]  # Add your admin Telegram user IDs here
+ADMIN_IDS = [6327617477]  # Add your admin Telegram user IDs here
 
 # Define command handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
