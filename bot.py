@@ -40,6 +40,9 @@ AWAITING_CHECK_VALUE = 1
 AWAITING_ADD_VALUE = 2
 AWAITING_REMOVE_VALUE = 3
 
+# Keys for storing the active message in user_data
+ACTIVE_MESSAGE_KEY = 'active_message'  # Store (chat_id, message_id) for active menu
+
 # Define command handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for the /start command"""
@@ -66,9 +69,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show the main menu with inline buttons"""
-    # Clean up previous menus
-    await clean_previous_menus(update, context)
-    
     # Identify the user
     user = update.effective_user
     
@@ -102,17 +102,14 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     menu_text += "\n💡 Совет: В любой момент введите /menu для возврата в это меню"
     
-    # Send the menu message
-    message = await update.message.reply_text(
+    # Use the new update_or_send_message function
+    await update_or_send_message(
+        update,
+        context,
         menu_text,
         reply_markup=reply_markup,
         parse_mode='Markdown'
     )
-    
-    # Store message ID for later cleanup
-    if not context.user_data.get('menu_messages'):
-        context.user_data['menu_messages'] = []
-    context.user_data['menu_messages'].append((chat_id_from_update(update), message.message_id))
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for the /help command"""
@@ -150,42 +147,25 @@ async def show_help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     keyboard = [[InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    if update.callback_query:
-        # Edit message if callback query
-        await update.callback_query.edit_message_text(
-            help_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-    else:
-        # Send new message if command
-        await update.message.reply_text(
-            help_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
+    await update_or_send_message(
+        update,
+        context,
+        help_text,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
 
 async def show_check_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show the check value prompt"""
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
-            "Введите значение для проверки в вайтлисте:",
-            reply_markup=reply_markup
-        )
-    else:
-        # Clean up previous menu messages
-        await clean_previous_menus(update, context)
-        message = await update.message.reply_text(
-            "Введите значение для проверки в вайтлисте:",
-            reply_markup=reply_markup
-        )
-        # Store message ID
-        if not context.user_data.get('menu_messages'):
-            context.user_data['menu_messages'] = []
-        context.user_data['menu_messages'].append((chat_id_from_update(update), message.message_id))
+    await update_or_send_message(
+        update,
+        context,
+        "Введите значение для проверки в вайтлисте:",
+        reply_markup=reply_markup
+    )
     
     return AWAITING_CHECK_VALUE
 
@@ -212,20 +192,14 @@ async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Clean up previous menu messages
-    await clean_previous_menus(update, context)
-    
-    # Send new response
-    message = await update.message.reply_text(
+    # Use update_or_send_message instead of creating a new message
+    await update_or_send_message(
+        update, 
+        context,
         message_text,
         reply_markup=reply_markup,
         parse_mode='Markdown'
     )
-    
-    # Store message ID
-    if not context.user_data.get('menu_messages'):
-        context.user_data['menu_messages'] = []
-    context.user_data['menu_messages'].append((chat_id_from_update(update), message.message_id))
     
     return ConversationHandler.END
 
@@ -238,7 +212,8 @@ async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.callback_query.answer("У вас нет прав доступа к этому разделу.")
             await show_main_menu(update, context)
         else:
-            await update.message.reply_text("У вас нет прав доступа к этому разделу.")
+            message = await update.message.reply_text("У вас нет прав доступа к этому разделу.")
+            await save_active_message(update, context, message)
         return
     
     # Admin menu keyboard
@@ -259,24 +234,13 @@ async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
-            "*Панель администратора*\n\nВыберите действие:",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-    else:
-        # Clean up previous menu messages
-        await clean_previous_menus(update, context)
-        message = await update.message.reply_text(
-            "*Панель администратора*\n\nВыберите действие:",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-        # Store message ID
-        if not context.user_data.get('menu_messages'):
-            context.user_data['menu_messages'] = []
-        context.user_data['menu_messages'].append((chat_id_from_update(update), message.message_id))
+    await update_or_send_message(
+        update,
+        context,
+        "*Панель администратора*\n\nВыберите действие:",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
     
     # Show persistent keyboard after admin menu
     if not update.callback_query:
@@ -294,7 +258,8 @@ async def show_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if update.callback_query:
             await update.callback_query.answer("У вас нет прав доступа к этому разделу.")
         else:
-            await update.message.reply_text("У вас нет прав доступа к этому разделу.")
+            message = await update.message.reply_text("У вас нет прав доступа к этому разделу.")
+            await save_active_message(update, context, message)
         return
     
     try:
@@ -362,24 +327,13 @@ async def show_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
-            stats_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-    else:
-        # Clean up previous menu messages
-        await clean_previous_menus(update, context)
-        message = await update.message.reply_text(
-            stats_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-        # Store message ID
-        if not context.user_data.get('menu_messages'):
-            context.user_data['menu_messages'] = []
-        context.user_data['menu_messages'].append((chat_id_from_update(update), message.message_id))
+    await update_or_send_message(
+        update,
+        context,
+        stats_text,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
 
 async def show_add_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show menu for adding a value to whitelist"""
@@ -424,19 +378,13 @@ async def handle_add_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Clean up previous menu messages
-    await clean_previous_menus(update, context)
-    
-    # Send new response
-    message = await update.message.reply_text(
+    # Use update_or_send_message instead of creating a new message
+    await update_or_send_message(
+        update,
+        context,
         message_text,
         reply_markup=reply_markup
     )
-    
-    # Store message ID
-    if not context.user_data.get('menu_messages'):
-        context.user_data['menu_messages'] = []
-    context.user_data['menu_messages'].append((chat_id_from_update(update), message.message_id))
     
     return ConversationHandler.END
 
@@ -483,19 +431,13 @@ async def handle_remove_value(update: Update, context: ContextTypes.DEFAULT_TYPE
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Clean up previous menu messages
-    await clean_previous_menus(update, context)
-    
-    # Send new response
-    message = await update.message.reply_text(
+    # Use update_or_send_message instead of creating a new message
+    await update_or_send_message(
+        update,
+        context,
         message_text,
         reply_markup=reply_markup
     )
-    
-    # Store message ID
-    if not context.user_data.get('menu_messages'):
-        context.user_data['menu_messages'] = []
-    context.user_data['menu_messages'].append((chat_id_from_update(update), message.message_id))
     
     return ConversationHandler.END
 
@@ -559,24 +501,13 @@ async def show_list_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
-            message_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-    else:
-        # Clean up previous menu messages
-        await clean_previous_menus(update, context)
-        message = await update.message.reply_text(
-            message_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-        # Store message ID
-        if not context.user_data.get('menu_messages'):
-            context.user_data['menu_messages'] = []
-        context.user_data['menu_messages'].append((chat_id_from_update(update), message.message_id))
+    await update_or_send_message(
+        update,
+        context,
+        message_text,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
 
 async def handle_whitelist_pagination(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle whitelist pagination buttons"""
@@ -607,18 +538,13 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="broadcast_cancel")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Clean up previous menu messages
-    await clean_previous_menus(update, context)
-    
-    message = await update.message.reply_text(
+    # Use update_or_send_message instead of creating a new message
+    await update_or_send_message(
+        update,
+        context,
         "Введите сообщение для отправки всем пользователям:",
         reply_markup=reply_markup
     )
-    
-    # Store message ID
-    if not context.user_data.get('menu_messages'):
-        context.user_data['menu_messages'] = []
-    context.user_data['menu_messages'].append((chat_id_from_update(update), message.message_id))
     
     return BROADCAST_MESSAGE
 
@@ -700,193 +626,6 @@ async def cancel_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
     
     return ConversationHandler.END
-
-async def clean_previous_menus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Delete previous menu messages to keep the chat clean"""
-    if context.user_data.get('menu_messages'):
-        for chat_id, message_id in context.user_data['menu_messages'][-3:]:  # Keep only last 3 to avoid too many deletions
-            try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-            except Exception as e:
-                logger.debug(f"Could not delete message {message_id}: {e}")
-        
-        # Clear the list after deletion attempts
-        context.user_data['menu_messages'] = []
-
-def chat_id_from_update(update: Update) -> int:
-    """Extract chat ID from an update object"""
-    if update.effective_chat:
-        return update.effective_chat.id
-    elif update.callback_query and update.callback_query.message:
-        return update.callback_query.message.chat_id
-    elif update.message:
-        return update.message.chat_id
-    else:
-        # Fallback - should not happen in normal operation
-        return 0
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler for processing all non-command messages"""
-    if not update.message or not update.message.text:
-        return
-    
-    # Update user activity
-    db.update_user_activity(update.effective_user.id)
-    
-    text = update.message.text.strip()
-    
-    # Handle button presses from persistent keyboard
-    if text == "🔍 Проверить":
-        await show_check_menu(update, context)
-        return
-    elif text == "❓ Помощь":
-        await show_help_menu(update, context)
-        return
-    elif text == "🏠 Главное меню":
-        await show_main_menu(update, context)
-        return
-    elif text == "🔄 Обновить":
-        await show_persistent_keyboard(update, context)
-        return
-    elif text == "👑 Админ-панель" and update.effective_user.id in ADMIN_IDS:
-        await show_admin_menu(update, context)
-        return
-    elif text == "📊 Статистика" and update.effective_user.id in ADMIN_IDS:
-        await show_stats_menu(update, context)
-        return
-    
-    # Handle different conversation states
-    if context.user_data.get('expecting_check'):
-        context.user_data['expecting_check'] = False
-        await handle_check_value(update, context)
-    elif context.user_data.get('expecting_add'):
-        context.user_data['expecting_add'] = False
-        await handle_add_value(update, context)
-    elif context.user_data.get('expecting_remove'):
-        context.user_data['expecting_remove'] = False
-        await handle_remove_value(update, context)
-    elif context.user_data.get('expecting_broadcast'):
-        context.user_data['expecting_broadcast'] = False
-        await start_broadcast_process(update, context)
-    else:
-        # Normal message handling - check whitelist
-        if db.check_whitelist(text):
-            keyboard = [
-                [InlineKeyboardButton("🔍 Проверить другое значение", callback_data="action_check")],
-                [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await update.message.reply_text(
-                f"✅ Значение \"{text}\" *найдено* в вайтлисте!",
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
-            )
-        else:
-            keyboard = [
-                [InlineKeyboardButton("🔍 Проверить другое значение", callback_data="action_check")],
-                [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await update.message.reply_text(
-                f"❌ Значение \"{text}\" *не найдено* в вайтлисте.",
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
-            )
-
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle button callbacks from inline keyboards"""
-    query = update.callback_query
-    await query.answer()
-    
-    # Extract the callback data
-    data = query.data
-    
-    # Main menu actions
-    if data == "action_check":
-        await show_check_menu(update, context)
-    elif data == "action_help":
-        await show_help_menu(update, context)
-    # Admin menu navigation
-    elif data == "menu_admin":
-        await show_admin_menu(update, context)
-    elif data == "back_to_main":
-        # Back to main menu
-        await edit_to_main_menu(update, context)
-    # Admin actions
-    elif data == "admin_add":
-        await show_add_menu(update, context)
-    elif data == "admin_remove":
-        await show_remove_menu(update, context)
-    elif data == "admin_list":
-        await show_list_menu(update, context)
-    elif data == "admin_broadcast":
-        await show_broadcast_menu(update, context)
-    elif data == "admin_stats":
-        await show_stats_menu(update, context)
-    # Broadcast actions
-    elif data == "broadcast_cancel":
-        await cancel_broadcast(update, context)
-    elif data == "start_broadcast":
-        await start_broadcast_from_button(update, context)
-    # Other callbacks
-    elif data.startswith("remove_"):
-        # Extract the value to remove
-        value_to_remove = data[7:]  # Remove "remove_" prefix
-        success = db.remove_from_whitelist(value_to_remove)
-        
-        if success:
-            await query.edit_message_text(f"Значение '{value_to_remove}' успешно удалено из вайтлиста.")
-        else:
-            await query.edit_message_text(f"Не удалось удалить значение '{value_to_remove}' из вайтлиста.")
-        
-        # Add a button to go back to admin menu
-        keyboard = [[InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_reply_markup(reply_markup)
-
-async def edit_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Edit the current message to show the main menu"""
-    query = update.callback_query
-    user = update.effective_user
-    
-    # Create keyboard with main options
-    keyboard = []
-    
-    # Add primary actions row
-    keyboard.append([
-        InlineKeyboardButton("🔍 Проверить значение", callback_data="action_check"),
-        InlineKeyboardButton("❓ Помощь", callback_data="action_help")
-    ])
-    
-    # Add admin panel row for admins
-    if user.id in ADMIN_IDS:
-        keyboard.append([
-            InlineKeyboardButton("👑 Панель администратора", callback_data="menu_admin")
-        ])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # Menu title and description
-    menu_text = (
-        "*🤖 Главное меню MegaBuddies*\n\n"
-        "Выберите действие из меню ниже.\n"
-        "• Используйте _Проверить значение_ для проверки информации в вайтлисте\n"
-        "• Используйте _Помощь_ для получения информации о командах\n"
-    )
-    
-    if user.id in ADMIN_IDS:
-        menu_text += "• Используйте _Панель администратора_ для доступа к админ-функциям\n"
-    
-    menu_text += "\n💡 Совет: В любой момент введите /menu для возврата в это меню"
-    
-    # Edit the message
-    await query.edit_message_text(
-        menu_text,
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
 
 async def show_broadcast_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show menu for broadcast with options"""
@@ -1057,16 +796,22 @@ async def show_persistent_keyboard(update: Update, context: ContextTypes.DEFAULT
         input_field_placeholder="Выберите действие..."  # Placeholder text in input field
     )
     
-    # Send with a simple message (or update existing message)
-    if update.callback_query:
-        await context.bot.send_message(
+    # Send new message with keyboard
+    if update.message:
+        message = await update.message.reply_text(
+            "Клавиатура обновлена. Используйте её для быстрого доступа к функциям бота:",
+            reply_markup=reply_markup
+        )
+    elif update.callback_query:
+        message = await context.bot.send_message(
             chat_id=update.callback_query.message.chat_id,
-            text="Клавиатура обновлена. Используйте её для быстрого доступа к функциям бота.",
+            text="Клавиатура обновлена. Используйте её для быстрого доступа к функциям бота:",
             reply_markup=reply_markup
         )
     else:
-        await update.message.reply_text(
-            "Воспользуйтесь клавиатурой для управления ботом:",
+        message = await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="Клавиатура обновлена. Используйте её для быстрого доступа к функциям бота:",
             reply_markup=reply_markup
         )
 
@@ -1074,6 +819,212 @@ async def show_persistent_keyboard(update: Update, context: ContextTypes.DEFAULT
 async def refresh_keyboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for the command to refresh the persistent keyboard"""
     await show_persistent_keyboard(update, context)
+
+# Add function to save active message
+async def save_active_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message) -> None:
+    """Save the active message ID for a user to enable in-place updates"""
+    context.user_data[ACTIVE_MESSAGE_KEY] = (message.chat_id, message.message_id)
+
+# Add function to update or send message
+async def update_or_send_message(
+    update: Update, 
+    context: ContextTypes.DEFAULT_TYPE, 
+    text: str, 
+    reply_markup=None, 
+    parse_mode=None
+) -> None:
+    """Update existing message or send a new one if no active message exists"""
+    if update.callback_query:
+        # If this is a callback query, edit the message that originated it
+        try:
+            await update.callback_query.edit_message_text(
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+            return
+        except Exception as e:
+            logger.debug(f"Could not edit callback query message: {e}")
+    
+    # Check if there's an active message we can edit
+    if ACTIVE_MESSAGE_KEY in context.user_data:
+        chat_id, message_id = context.user_data[ACTIVE_MESSAGE_KEY]
+        try:
+            message = await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+            return
+        except Exception as e:
+            logger.debug(f"Could not edit message {message_id}: {e}")
+    
+    # If we couldn't edit an existing message, send a new one
+    if update.message:
+        message = await update.message.reply_text(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode
+        )
+    else:
+        # Fallback for callback queries when edit fails
+        chat_id = update.effective_chat.id
+        message = await context.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode
+        )
+    
+    # Save this as the new active message
+    await save_active_message(update, context, message)
+
+def chat_id_from_update(update: Update) -> int:
+    """Extract chat ID from an update object"""
+    if update.effective_chat:
+        return update.effective_chat.id
+    elif update.callback_query and update.callback_query.message:
+        return update.callback_query.message.chat_id
+    elif update.message:
+        return update.message.chat_id
+    else:
+        # Fallback - should not happen in normal operation
+        return 0
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler for processing all non-command messages"""
+    if not update.message or not update.message.text:
+        return
+    
+    # Update user activity
+    db.update_user_activity(update.effective_user.id)
+    
+    text = update.message.text.strip()
+    
+    # Handle button presses from persistent keyboard
+    if text == "🔍 Проверить":
+        await show_check_menu(update, context)
+        return
+    elif text == "❓ Помощь":
+        await show_help_menu(update, context)
+        return
+    elif text == "🏠 Главное меню":
+        await show_main_menu(update, context)
+        return
+    elif text == "🔄 Обновить":
+        await show_persistent_keyboard(update, context)
+        return
+    elif text == "👑 Админ-панель" and update.effective_user.id in ADMIN_IDS:
+        await show_admin_menu(update, context)
+        return
+    elif text == "📊 Статистика" and update.effective_user.id in ADMIN_IDS:
+        await show_stats_menu(update, context)
+        return
+    
+    # Handle different conversation states
+    if context.user_data.get('expecting_check'):
+        context.user_data['expecting_check'] = False
+        await handle_check_value(update, context)
+    elif context.user_data.get('expecting_add'):
+        context.user_data['expecting_add'] = False
+        await handle_add_value(update, context)
+    elif context.user_data.get('expecting_remove'):
+        context.user_data['expecting_remove'] = False
+        await handle_remove_value(update, context)
+    elif context.user_data.get('expecting_broadcast'):
+        context.user_data['expecting_broadcast'] = False
+        await start_broadcast_process(update, context)
+    else:
+        # Normal message handling - check whitelist
+        if db.check_whitelist(text):
+            keyboard = [
+                [InlineKeyboardButton("🔍 Проверить другое значение", callback_data="action_check")],
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update_or_send_message(
+                update,
+                context,
+                f"✅ Значение \"{text}\" *найдено* в вайтлисте!",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+        else:
+            keyboard = [
+                [InlineKeyboardButton("🔍 Проверить другое значение", callback_data="action_check")],
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update_or_send_message(
+                update,
+                context,
+                f"❌ Значение \"{text}\" *не найдено* в вайтлисте.",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle button callbacks from inline keyboards"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Extract the callback data
+    data = query.data
+    
+    # Main menu actions
+    if data == "action_check":
+        await show_check_menu(update, context)
+    elif data == "action_help":
+        await show_help_menu(update, context)
+    # Admin menu navigation
+    elif data == "menu_admin":
+        await show_admin_menu(update, context)
+    elif data == "back_to_main":
+        # Back to main menu
+        await show_main_menu(update, context)
+    # Admin actions
+    elif data == "admin_add":
+        await show_add_menu(update, context)
+    elif data == "admin_remove":
+        await show_remove_menu(update, context)
+    elif data == "admin_list":
+        await show_list_menu(update, context)
+    elif data == "admin_broadcast":
+        await show_broadcast_menu(update, context)
+    elif data == "admin_stats":
+        await show_stats_menu(update, context)
+    # Broadcast actions
+    elif data == "broadcast_cancel":
+        await cancel_broadcast(update, context)
+    elif data == "start_broadcast":
+        await start_broadcast_from_button(update, context)
+    # Other callbacks
+    elif data.startswith("remove_"):
+        # Extract the value to remove
+        value_to_remove = data[7:]  # Remove "remove_" prefix
+        success = db.remove_from_whitelist(value_to_remove)
+        
+        # Create response message with buttons
+        if success:
+            message_text = f"Значение '{value_to_remove}' успешно удалено из вайтлиста."
+        else:
+            message_text = f"Не удалось удалить значение '{value_to_remove}' из вайтлиста."
+        
+        # Add a button to go back to admin menu
+        keyboard = [[InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Use update_or_send_message instead of direct edit
+        await update_or_send_message(
+            update,
+            context,
+            message_text,
+            reply_markup=reply_markup
+        )
 
 def main() -> None:
     """Start the bot"""
@@ -1112,8 +1063,7 @@ def main() -> None:
         fallbacks=[CallbackQueryHandler(button_callback)],
         name="check_conversation",
         persistent=False,
-        per_chat=True,
-        per_message=True
+        per_chat=True
     )
     application.add_handler(check_conv_handler)
     
@@ -1126,8 +1076,7 @@ def main() -> None:
         fallbacks=[CallbackQueryHandler(button_callback)],
         name="add_conversation",
         persistent=False,
-        per_chat=True,
-        per_message=True
+        per_chat=True
     )
     application.add_handler(add_conv_handler)
     
@@ -1140,8 +1089,7 @@ def main() -> None:
         fallbacks=[CallbackQueryHandler(button_callback)],
         name="remove_conversation",
         persistent=False,
-        per_chat=True,
-        per_message=True
+        per_chat=True
     )
     application.add_handler(remove_conv_handler)
     
@@ -1154,8 +1102,7 @@ def main() -> None:
         fallbacks=[CallbackQueryHandler(cancel_broadcast, pattern="^broadcast_cancel$")],
         name="broadcast_conversation",
         persistent=False,
-        per_chat=True,
-        per_message=True
+        per_chat=True
     )
     application.add_handler(broadcast_conv_handler)
     
