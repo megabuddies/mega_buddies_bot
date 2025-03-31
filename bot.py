@@ -1040,7 +1040,8 @@ def main() -> None:
         },
         fallbacks=[CallbackQueryHandler(button_callback)],
         name="check_conversation",
-        persistent=False
+        persistent=False,
+        per_chat=True
     )
     application.add_handler(check_conv_handler)
     
@@ -1052,7 +1053,8 @@ def main() -> None:
         },
         fallbacks=[CallbackQueryHandler(button_callback)],
         name="add_conversation",
-        persistent=False
+        persistent=False,
+        per_chat=True
     )
     application.add_handler(add_conv_handler)
     
@@ -1064,7 +1066,8 @@ def main() -> None:
         },
         fallbacks=[CallbackQueryHandler(button_callback)],
         name="remove_conversation",
-        persistent=False
+        persistent=False,
+        per_chat=True
     )
     application.add_handler(remove_conv_handler)
     
@@ -1076,7 +1079,8 @@ def main() -> None:
         },
         fallbacks=[CallbackQueryHandler(cancel_broadcast, pattern="^broadcast_cancel$")],
         name="broadcast_conversation",
-        persistent=False
+        persistent=False,
+        per_chat=True
     )
     application.add_handler(broadcast_conv_handler)
     
