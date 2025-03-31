@@ -43,6 +43,9 @@ AWAITING_REMOVE_VALUE = 3
 # Keys for storing the active message in user_data
 ACTIVE_MESSAGE_KEY = 'active_message'  # Store (chat_id, message_id) for active menu
 
+# Константа для хранения последнего сообщения бота
+BOT_ACTIVE_MESSAGE_KEY = 'active_bot_message'  # Ключ для хранения ID активного сообщения бота
+
 # Define command handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for the /start command"""
@@ -314,7 +317,7 @@ async def show_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # Fallback message if stats generation fails
         logger.error(f"Error generating stats: {e}")
         stats_text = (
-            "*📊 Статистика бота*\n\n"
+            "*�� Статистика бота*\n\n"
             "⚠️ Произошла ошибка при получении статистики.\n"
             f"Детали ошибки: {str(e)}\n\n"
             "Попробуйте позже или обратитесь к разработчику."
@@ -553,13 +556,27 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     message_text = update.message.text
     
     if not message_text:
-        await update.message.reply_text("Пожалуйста, отправьте текстовое сообщение.")
+        await update_or_send_message(
+            update,
+            context,
+            "Пожалуйста, отправьте текстовое сообщение.",
+            InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ Отмена", callback_data="broadcast_cancel")
+            ]])
+        )
         return BROADCAST_MESSAGE
     
     users = db.get_all_users()
     
     if not users:
-        await update.message.reply_text("В базе нет пользователей для рассылки.")
+        await update_or_send_message(
+            update,
+            context,
+            "В базе нет пользователей для рассылки.",
+            InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="menu_admin")
+            ]])
+        )
         return ConversationHandler.END
     
     # Log broadcast event
@@ -574,7 +591,12 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     except Exception as e:
         logger.debug(f"Could not delete user message: {e}")
     
-    progress_message = await update.message.reply_text(f"Начинаю рассылку для {len(users)} пользователей...")
+    # Use our main message for progress updates
+    await update_or_send_message(
+        update,
+        context,
+        f"Начинаю рассылку для {len(users)} пользователей..."
+    )
     
     success_count = 0
     fail_count = 0
@@ -591,7 +613,9 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             # Update progress message periodically
             if (i % progress_interval == 0 or i == len(users) - 1) and time.time() - last_progress_update > 2:
                 progress_percent = int((i + 1) / len(users) * 100)
-                await progress_message.edit_text(
+                await update_or_send_message(
+                    update,
+                    context,
                     f"Рассылка: {progress_percent}% ({i+1}/{len(users)})\n"
                     f"✅ Успешно: {success_count}\n"
                     f"❌ Ошибок: {fail_count}"
@@ -611,7 +635,9 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await progress_message.edit_text(
+    await update_or_send_message(
+        update,
+        context,
         f"✅ Рассылка завершена\n\n"
         f"📊 Статистика:\n"
         f"• Всего получателей: {len(users)}\n"
@@ -782,7 +808,7 @@ async def start_broadcast_process(update: Update, context: ContextTypes.DEFAULT_
     })
 
 async def show_persistent_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show a persistent keyboard at the bottom of the chat"""
+    """Show a persistent keyboard without sending a new message"""
     user = update.effective_user
     
     # Create keyboard buttons
@@ -805,24 +831,19 @@ async def show_persistent_keyboard(update: Update, context: ContextTypes.DEFAULT
         input_field_placeholder="Выберите действие..."  # Placeholder text in input field
     )
     
-    # Send new message with keyboard
-    if update.message:
-        message = await update.message.reply_text(
-            "Используйте клавиатуру для быстрого доступа к функциям бота.",
-            reply_markup=reply_markup
-        )
-    elif update.callback_query:
+    # Instead of sending a new message, update the active one or wait for next message
+    # We'll only send a keyboard message if we don't have an active message
+    if BOT_ACTIVE_MESSAGE_KEY not in context.chat_data:
+        # If no active message, we'll send a minimal one
+        chat_id = chat_id_from_update(update)
         message = await context.bot.send_message(
-            chat_id=update.callback_query.message.chat_id,
-            text="Используйте клавиатуру для быстрого доступа к функциям бота.",
+            chat_id=chat_id,
+            text="Загрузка меню...", # This will be replaced soon with a real menu
             reply_markup=reply_markup
         )
-    else:
-        message = await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="Используйте клавиатуру для быстрого доступа к функциям бота.",
-            reply_markup=reply_markup
-        )
+        context.chat_data[BOT_ACTIVE_MESSAGE_KEY] = message.message_id
+    # Otherwise, just change keyboard on the existing message
+    # This will be done automatically with the next update_or_send_message call
 
 # Add function to delete user message and update or send message
 async def delete_and_update_message(
@@ -832,7 +853,7 @@ async def delete_and_update_message(
     reply_markup=None, 
     parse_mode=None
 ) -> None:
-    """Delete user message, update existing menu message or send a new one"""
+    """Delete user message and update the single bot message or send a new one"""
     # Try to delete the user's message if possible
     if update.message:
         try:
@@ -843,7 +864,7 @@ async def delete_and_update_message(
         except Exception as e:
             logger.debug(f"Could not delete user message: {e}")
     
-    # Now update or send a new message
+    # Then update the bot's single message
     await update_or_send_message(update, context, text, reply_markup, parse_mode)
 
 # Add function to save active message
@@ -859,35 +880,52 @@ async def update_or_send_message(
     reply_markup=None, 
     parse_mode=None
 ) -> None:
-    """Update existing message or send a new one if no active message exists"""
+    """Maintain a single message from bot by updating it or sending a new one if needed"""
+    # Extract the chat id
+    chat_id = chat_id_from_update(update)
+    
+    # Get the active message id for this chat if it exists
+    active_message_id = None
+    if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
+        active_message_id = context.chat_data[BOT_ACTIVE_MESSAGE_KEY]
+    
+    # First try to update the active message if we have one
+    if active_message_id:
+        try:
+            message = await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=active_message_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+            return
+        except Exception as e:
+            logger.debug(f"Could not edit active message {active_message_id}: {e}")
+            # If we can't edit, we'll need to send a new message
+    
+    # If we're processing a callback query, try to edit that message
     if update.callback_query:
-        # If this is a callback query, edit the message that originated it
         try:
             await update.callback_query.edit_message_text(
                 text=text,
                 reply_markup=reply_markup,
                 parse_mode=parse_mode
             )
+            # Store this message as our active message
+            context.chat_data[BOT_ACTIVE_MESSAGE_KEY] = update.callback_query.message.message_id
             return
         except Exception as e:
             logger.debug(f"Could not edit callback query message: {e}")
     
-    # Check if there's an active message we can edit
-    if ACTIVE_MESSAGE_KEY in context.user_data:
-        chat_id, message_id = context.user_data[ACTIVE_MESSAGE_KEY]
-        try:
-            message = await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=text,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode
-            )
-            return
-        except Exception as e:
-            logger.debug(f"Could not edit message {message_id}: {e}")
-    
     # If we couldn't edit an existing message, send a new one
+    # But first, let's delete any older bot messages in this chat to keep it clean
+    try:
+        await clean_old_bot_messages(update, context)
+    except Exception as e:
+        logger.debug(f"Error cleaning old messages: {e}")
+    
+    # Now send our new message
     if update.message:
         message = await update.message.reply_text(
             text=text,
@@ -895,8 +933,6 @@ async def update_or_send_message(
             parse_mode=parse_mode
         )
     else:
-        # Fallback for callback queries when edit fails
-        chat_id = update.effective_chat.id
         message = await context.bot.send_message(
             chat_id=chat_id,
             text=text,
@@ -904,8 +940,44 @@ async def update_or_send_message(
             parse_mode=parse_mode
         )
     
-    # Save this as the new active message
-    await save_active_message(update, context, message)
+    # Store this as our new active message
+    context.chat_data[BOT_ACTIVE_MESSAGE_KEY] = message.message_id
+
+async def clean_old_bot_messages(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clean up old bot messages to keep chat clean, except the active message"""
+    chat_id = chat_id_from_update(update)
+    
+    # If we have an active message, keep track of it
+    active_message_id = None
+    if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
+        active_message_id = context.chat_data[BOT_ACTIVE_MESSAGE_KEY]
+    
+    # Try to get recent messages to delete old ones
+    try:
+        # We can only delete recent messages that the bot sent
+        # We'll use getUpdates with a limit to avoid excessive API calls
+        # This is an approximation as getUpdates has limitations
+        recent_updates = await context.bot.get_updates(limit=10, timeout=0)
+        
+        # Find messages from this bot in this chat
+        bot_id = context.bot.id
+        for bot_update in recent_updates:
+            if (bot_update.message and 
+                bot_update.message.from_user and 
+                bot_update.message.from_user.id == bot_id and
+                bot_update.message.chat_id == chat_id and
+                (active_message_id is None or bot_update.message.message_id != active_message_id)):
+                
+                # Try to delete this old message
+                try:
+                    await context.bot.delete_message(
+                        chat_id=chat_id,
+                        message_id=bot_update.message.message_id
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not delete old bot message: {e}")
+    except Exception as e:
+        logger.debug(f"Error getting updates to clean messages: {e}")
 
 def chat_id_from_update(update: Update) -> int:
     """Extract chat ID from an update object"""
