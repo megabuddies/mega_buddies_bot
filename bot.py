@@ -1040,8 +1040,7 @@ def main() -> None:
         },
         fallbacks=[CallbackQueryHandler(button_callback)],
         name="check_conversation",
-        persistent=False,
-        per_message=True
+        persistent=False
     )
     application.add_handler(check_conv_handler)
     
@@ -1053,8 +1052,7 @@ def main() -> None:
         },
         fallbacks=[CallbackQueryHandler(button_callback)],
         name="add_conversation",
-        persistent=False,
-        per_message=True
+        persistent=False
     )
     application.add_handler(add_conv_handler)
     
@@ -1066,8 +1064,7 @@ def main() -> None:
         },
         fallbacks=[CallbackQueryHandler(button_callback)],
         name="remove_conversation",
-        persistent=False,
-        per_message=True
+        persistent=False
     )
     application.add_handler(remove_conv_handler)
     
@@ -1079,8 +1076,7 @@ def main() -> None:
         },
         fallbacks=[CallbackQueryHandler(cancel_broadcast, pattern="^broadcast_cancel$")],
         name="broadcast_conversation",
-        persistent=False,
-        per_message=True
+        persistent=False
     )
     application.add_handler(broadcast_conv_handler)
     
@@ -1091,7 +1087,7 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Set up the menu commands
-    async def setup_commands():
+    async def setup_commands(application):
         bot = application.bot
         commands = [
             BotCommand("start", "Начать работу с ботом"),
