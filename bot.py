@@ -39,6 +39,12 @@ BROADCAST_MESSAGE = 0
 AWAITING_CHECK_VALUE = 1
 AWAITING_ADD_VALUE = 2
 AWAITING_REMOVE_VALUE = 3
+AWAITING_WL_TYPE = 4
+AWAITING_WL_REASON = 5
+
+# WL types and reasons
+WL_TYPES = ["GTD", "FCFS"]
+WL_REASONS = ["Fluffy holder", "X contributor"]
 
 # Keys for storing the active message in user_data
 ACTIVE_MESSAGE_KEY = 'active_message'  # Store (chat_id, message_id) for active menu
@@ -204,6 +210,7 @@ async def show_check_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Process the value entered for checking"""
     value = update.message.text.strip()
+    user = update.effective_user
     
     # Check the value against whitelist
     result = db.check_whitelist(value)
@@ -212,10 +219,12 @@ async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     db.update_user_activity(update.effective_user.id)
     
     # Create response message
-    if result:
+    if result["found"]:
         message_text = (
             f"*✅ Результат проверки*\n\n"
-            f"Значение `{value}` *найдено* в базе данных!"
+            f"Привет, {user.first_name}! 👋\n\n"
+            f"Значение `{value}` *найдено* в базе данных!\n\n"
+            f"У вас {result['wl_type']} WL потому что вы {result['wl_reason']}! 🎉"
         )
     else:
         message_text = (
@@ -418,27 +427,142 @@ async def show_add_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     # Устанавливаем флаг, чтобы знать, что следующее сообщение - для добавления в вайтлист
     context.user_data['expecting_add'] = True
+    # Очищаем данные о текущем добавлении
+    if 'add_data' in context.user_data:
+        del context.user_data['add_data']
     
     return AWAITING_ADD_VALUE
 
 async def handle_add_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Process adding a value to whitelist"""
+    """Process the value for whitelist and ask for WL type"""
     value = update.message.text.strip()
     
     # Добавляем логирование
-    logger.debug(f"Добавление значения в базу данных: '{value}'")
+    logger.debug(f"Получено значение для добавления в базу данных: '{value}'")
     
+    # Сохраняем значение в промежуточных данных
+    context.user_data['add_data'] = {'value': value}
+    
+    # Создаем клавиатуру для выбора типа вайтлиста
+    keyboard = []
+    for wl_type in WL_TYPES:
+        keyboard.append([InlineKeyboardButton(wl_type, callback_data=f"wl_type_{wl_type}")])
+    keyboard.append([InlineKeyboardButton("◀️ Отмена", callback_data="menu_admin")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Отправляем запрос на выбор типа вайтлиста
+    message_text = (
+        f"Значение для добавления: *{value}*\n\n"
+        f"Выберите тип вайтлиста:"
+    )
+    
+    # Удаляем сообщение пользователя
     try:
-        # Add to whitelist
-        success = db.add_to_whitelist(value)
+        await context.bot.delete_message(
+            chat_id=update.message.chat_id,
+            message_id=update.message.message_id
+        )
+    except Exception as e:
+        logger.debug(f"Could not delete user message: {e}")
+    
+    # Отправляем сообщение с кнопками для выбора типа
+    await update_or_send_message(
+        update,
+        context,
+        message_text,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+    
+    return AWAITING_WL_TYPE
+
+async def handle_wl_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Process WL type selection and ask for reason"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Извлекаем выбранный тип из callback_data
+    selected_type = query.data.replace("wl_type_", "")
+    
+    # Проверяем, что тип в списке допустимых
+    if selected_type not in WL_TYPES:
+        await query.edit_message_text(
+            "❌ Произошла ошибка при выборе типа. Попробуйте снова.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к добавлению", callback_data="admin_add")
+            ]])
+        )
+        return ConversationHandler.END
+    
+    # Сохраняем тип вайтлиста
+    context.user_data['add_data']['wl_type'] = selected_type
+    
+    # Создаем клавиатуру для выбора причины
+    keyboard = []
+    for reason in WL_REASONS:
+        keyboard.append([InlineKeyboardButton(reason, callback_data=f"wl_reason_{reason}")])
+    keyboard.append([InlineKeyboardButton("◀️ Отмена", callback_data="menu_admin")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Отправляем запрос на выбор причины
+    value = context.user_data['add_data']['value']
+    message_text = (
+        f"Значение для добавления: *{value}*\n"
+        f"Тип вайтлиста: *{selected_type}*\n\n"
+        f"Выберите причину добавления в вайтлист:"
+    )
+    
+    await query.edit_message_text(
+        message_text,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+    
+    return AWAITING_WL_REASON
+
+async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Process WL reason and add to whitelist"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Извлекаем выбранную причину из callback_data
+    selected_reason = query.data.replace("wl_reason_", "")
+    
+    # Проверяем, что причина в списке допустимых
+    if selected_reason not in WL_REASONS:
+        await query.edit_message_text(
+            "❌ Произошла ошибка при выборе причины. Попробуйте снова.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к добавлению", callback_data="admin_add")
+            ]])
+        )
+        return ConversationHandler.END
+    
+    # Получаем сохраненные данные
+    add_data = context.user_data.get('add_data', {})
+    value = add_data.get('value', '')
+    wl_type = add_data.get('wl_type', 'FCFS')
+    
+    # Добавляем запись в вайтлист
+    try:
+        success = db.add_to_whitelist(value, wl_type, selected_reason)
         
         # Log event
-        db.log_event("add_whitelist", update.effective_user.id, {"value": value}, success)
+        db.log_event("add_whitelist", update.effective_user.id, {
+            "value": value, 
+            "wl_type": wl_type, 
+            "wl_reason": selected_reason
+        }, success)
         
         # Create response message
         if success:
             logger.debug(f"Значение '{value}' успешно добавлено в базу данных")
-            message_text = f"✅ Значение \"{value}\" успешно добавлено в вайтлист!"
+            message_text = (
+                f"✅ Запись успешно добавлена в вайтлист!\n\n"
+                f"*Значение:* `{value}`\n"
+                f"*Тип WL:* {wl_type}\n"
+                f"*Причина:* {selected_reason}"
+            )
         else:
             logger.debug(f"Значение '{value}' уже существует в базе данных")
             message_text = f"⚠️ Значение \"{value}\" уже существует в вайтлисте."
@@ -451,15 +575,19 @@ async def handle_add_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Use delete_and_update_message instead
-        await delete_and_update_message(
-            update,
-            context,
+        # Send the response
+        await query.edit_message_text(
             message_text,
-            reply_markup=reply_markup
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
         )
         
+        # Очищаем данные о добавлении
+        if 'add_data' in context.user_data:
+            del context.user_data['add_data']
+        
         return ConversationHandler.END
+        
     except Exception as e:
         logger.error(f"Ошибка при добавлении значения в базу данных: {e}")
         message_text = f"❌ Произошла ошибка при добавлении значения \"{value}\" в базу данных."
@@ -470,12 +598,14 @@ async def handle_add_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await delete_and_update_message(
-            update,
-            context,
+        await query.edit_message_text(
             message_text,
             reply_markup=reply_markup
         )
+        
+        # Очищаем данные о добавлении
+        if 'add_data' in context.user_data:
+            del context.user_data['add_data']
         
         return ConversationHandler.END
 
@@ -551,13 +681,13 @@ async def show_list_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     
     # Get values from whitelist
-    values = db.get_all_whitelist()
+    items = db.get_all_whitelist()
     
     # Create response message
-    if values:
-        values_per_page = 10
+    if items:
+        items_per_page = 5  # Меньше записей на странице, так как каждая запись теперь содержит больше информации
         page = context.user_data.get('whitelist_page', 0)
-        total_pages = (len(values) + values_per_page - 1) // values_per_page
+        total_pages = (len(items) + items_per_page - 1) // items_per_page
         
         # Ensure page is valid
         if page >= total_pages:
@@ -567,18 +697,21 @@ async def show_list_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         context.user_data['whitelist_page'] = page
         
         # Get values for current page
-        start = page * values_per_page
-        end = min(start + values_per_page, len(values))
+        start = page * items_per_page
+        end = min(start + items_per_page, len(items))
         
         message_text = (
             f"*📋 База данных*\n\n"
-            f"Всего записей: {len(values)}\n"
+            f"Всего записей: {len(items)}\n"
             f"Страница {page+1} из {total_pages}\n\n"
         )
         
         # Add values with numbering in a clean format
-        for i, value in enumerate(values[start:end], start=start+1):
-            message_text += f"{i}. `{value}`\n"
+        for i, item in enumerate(items[start:end], start=start+1):
+            message_text += (
+                f"{i}. `{item['value']}`\n"
+                f"   Тип: {item['wl_type']}, Причина: {item['wl_reason']}\n\n"
+            )
         
         # Navigation buttons
         keyboard = []
@@ -1133,12 +1266,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Check the value against whitelist
         value = text
         result = db.check_whitelist(value)
+        user = update.effective_user
         
         # Create beautiful response
-        if result:
+        if result["found"]:
             message_text = (
                 f"*✅ Результат проверки*\n\n"
-                f"Значение `{value}` *найдено* в базе данных!"
+                f"Привет, {user.first_name}! 👋\n\n"
+                f"Значение `{value}` *найдено* в базе данных!\n\n"
+                f"У вас {result['wl_type']} WL потому что вы {result['wl_reason']}! 🎉"
             )
         else:
             message_text = (
@@ -1179,6 +1315,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # Extract the callback data
     data = query.data
     
+    # Пропускаем callback_data для wl_type и wl_reason, так как они обрабатываются в ConversationHandler
+    if data.startswith("wl_type_") or data.startswith("wl_reason_"):
+        return
+    
     # Main menu actions
     if data == "action_check":
         await show_check_menu(update, context)
@@ -1205,6 +1345,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await show_broadcast_menu(update, context)
     elif data == "admin_stats":
         await show_stats_menu(update, context)
+    # Whitelist pagination
+    elif data == "whitelist_next" or data == "whitelist_prev":
+        await handle_whitelist_pagination(update, context)
     # Broadcast actions
     elif data == "broadcast_cancel":
         await cancel_broadcast(update, context)
@@ -1279,9 +1422,14 @@ def main() -> None:
     add_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("add", show_add_menu)],
         states={
-            AWAITING_ADD_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_value)]
+            AWAITING_ADD_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_value)],
+            AWAITING_WL_TYPE: [CallbackQueryHandler(handle_wl_type, pattern=r"^wl_type_")],
+            AWAITING_WL_REASON: [CallbackQueryHandler(handle_wl_reason, pattern=r"^wl_reason_")]
         },
-        fallbacks=[CallbackQueryHandler(button_callback)],
+        fallbacks=[
+            CallbackQueryHandler(button_callback, pattern=r"^menu_admin$"),
+            CallbackQueryHandler(button_callback)
+        ],
         name="add_conversation",
         persistent=False,
         per_chat=True

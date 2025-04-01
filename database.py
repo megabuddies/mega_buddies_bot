@@ -17,7 +17,9 @@ class Database:
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS whitelist (
             id INTEGER PRIMARY KEY,
-            value TEXT UNIQUE
+            value TEXT NOT NULL,
+            wl_type TEXT DEFAULT 'FCFS',
+            wl_reason TEXT DEFAULT 'Fluffy holder'
         )
         ''')
         
@@ -79,21 +81,58 @@ class Database:
                 print(f"Error during migration: {e}")
                 conn.rollback()
         
+        # Check if whitelist table has the new columns
+        cursor.execute("PRAGMA table_info(whitelist)")
+        whitelist_columns = [column[1] for column in cursor.fetchall()]
+        
+        # Add new columns to whitelist table if they don't exist
+        if 'wl_type' not in whitelist_columns:
+            print("Migrating database: Adding wl_type column to whitelist table")
+            try:
+                cursor.execute('''
+                ALTER TABLE whitelist
+                ADD COLUMN wl_type TEXT DEFAULT 'FCFS'
+                ''')
+                conn.commit()
+                print("Added wl_type column successfully")
+            except Exception as e:
+                print(f"Error adding wl_type column: {e}")
+                conn.rollback()
+        
+        if 'wl_reason' not in whitelist_columns:
+            print("Migrating database: Adding wl_reason column to whitelist table")
+            try:
+                cursor.execute('''
+                ALTER TABLE whitelist
+                ADD COLUMN wl_reason TEXT DEFAULT 'Fluffy holder'
+                ''')
+                conn.commit()
+                print("Added wl_reason column successfully")
+            except Exception as e:
+                print(f"Error adding wl_reason column: {e}")
+                conn.rollback()
+        
         conn.close()
 
-    def add_to_whitelist(self, value: str) -> bool:
-        """Add a value to the whitelist"""
+    def add_to_whitelist(self, value: str, wl_type: str = "FCFS", wl_reason: str = "Fluffy holder") -> bool:
+        """Add a value to the whitelist with type and reason"""
         try:
             conn = sqlite3.connect(self.db_name)
             cursor = conn.cursor()
-            cursor.execute("INSERT INTO whitelist (value) VALUES (?)", (value,))
+            
+            # Проверяем, существует ли уже это значение
+            cursor.execute("SELECT id FROM whitelist WHERE value = ?", (value,))
+            if cursor.fetchone():
+                conn.close()
+                return False
+                
+            cursor.execute(
+                "INSERT INTO whitelist (value, wl_type, wl_reason) VALUES (?, ?, ?)", 
+                (value, wl_type, wl_reason)
+            )
             conn.commit()
             conn.close()
             return True
-        except sqlite3.IntegrityError:
-            # Value already exists
-            conn.close()
-            return False
         except Exception as e:
             print(f"Error adding to whitelist: {e}")
             conn.close()
@@ -109,26 +148,47 @@ class Database:
         conn.close()
         return affected
 
-    def check_whitelist(self, value: str) -> bool:
-        """Check if a value exists in the whitelist"""
+    def check_whitelist(self, value: str) -> Dict[str, Any]:
+        """Check if a value exists in the whitelist and return details"""
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM whitelist WHERE value = ?", (value,))
-        result = cursor.fetchone() is not None
+        cursor.execute("SELECT id, value, wl_type, wl_reason FROM whitelist WHERE value = ?", (value,))
+        row = cursor.fetchone()
         conn.close()
         
+        if row:
+            result = {
+                "found": True,
+                "id": row[0],
+                "value": row[1],
+                "wl_type": row[2],
+                "wl_reason": row[3]
+            }
+        else:
+            result = {"found": False}
+        
         # Record the check event
-        self.log_event("check", None, {"value": value, "result": result}, result)
+        self.log_event("check", None, {"value": value, "result": result["found"]}, result["found"])
         
         return result
 
-    def get_all_whitelist(self) -> List[str]:
-        """Get all values in the whitelist"""
+    def get_all_whitelist(self) -> List[Dict[str, Any]]:
+        """Get all values in the whitelist with their details"""
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
-        cursor.execute("SELECT value FROM whitelist")
-        result = [row[0] for row in cursor.fetchall()]
+        cursor.execute("SELECT id, value, wl_type, wl_reason FROM whitelist")
+        rows = cursor.fetchall()
         conn.close()
+        
+        result = []
+        for row in rows:
+            result.append({
+                "id": row[0],
+                "value": row[1],
+                "wl_type": row[2],
+                "wl_reason": row[3]
+            })
+        
         return result
     
     def get_whitelist_count(self) -> int:
