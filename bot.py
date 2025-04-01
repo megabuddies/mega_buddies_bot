@@ -230,7 +230,7 @@ async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     result = db.check_whitelist(value)
     
     # Log the check event
-    db.log_event("check_whitelist", update.effective_user.id, {"value": value}, bool(result))
+    db.log_event("check_whitelist", update.effective_user.id, {"value": value}, bool(result.get("found", False)))
     
     # Create reply markup with buttons for next actions
     keyboard = [
@@ -240,12 +240,12 @@ async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     # Prepare response message
-    if result:
+    if result.get("found", False):
         message_text = (
             f"✅ {user.first_name}, ваше значение найдено в вайтлисте!\n\n"
             f"*Значение:* `{value}`\n"
-            f"*Тип WL:* {result['wl_type']}\n"
-            f"*Причина:* {result['wl_reason']}"
+            f"*Тип WL:* {result.get('wl_type', 'Не указан')}\n"
+            f"*Причина:* {result.get('wl_reason', 'Не указана')}"
         )
     else:
         message_text = (
