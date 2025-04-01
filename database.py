@@ -579,4 +579,51 @@ class Database:
             return True, filename_with_timestamp
         except Exception as e:
             print(f"Error exporting whitelist to CSV: {e}")
-            return False, None 
+            return False, None
+
+    def search_whitelist(self, search_term: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Search whitelist for entries matching part of a value
+        
+        Args:
+            search_term: The search term to look for in values
+            limit: Maximum number of results to return
+            
+        Returns:
+            List of dictionaries with matching entries
+        """
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            # Use LIKE operator for partial matching
+            # The % wildcard matches any sequence of characters
+            cursor.execute(
+                "SELECT id, value, wl_type, wl_reason FROM whitelist " 
+                "WHERE value LIKE ? ORDER BY id LIMIT ?", 
+                (f"%{search_term}%", limit)
+            )
+            
+            rows = cursor.fetchall()
+            result = []
+            
+            for row in rows:
+                result.append({
+                    "id": row[0],
+                    "value": row[1],
+                    "wl_type": row[2],
+                    "wl_reason": row[3]
+                })
+            
+            conn.close()
+            
+            # Log the search event if there are results
+            self.log_event("search_whitelist", None, {
+                "search_term": search_term, 
+                "results_count": len(result)
+            }, bool(result))
+            
+            return result
+            
+        except Exception as e:
+            print(f"Error searching whitelist: {e}")
+            return [] 

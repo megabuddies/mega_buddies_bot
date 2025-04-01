@@ -46,12 +46,13 @@ db = Database()
 ADMIN_IDS = [6327617477]  # Add your admin Telegram user IDs here
 
 # States for conversation handlers
-BROADCAST_MESSAGE = 0
-AWAITING_CHECK_VALUE = 1
-AWAITING_ADD_VALUE = 2
-AWAITING_REMOVE_VALUE = 3
-AWAITING_WL_TYPE = 4
-AWAITING_WL_REASON = 5
+BROADCAST_MESSAGE = "broadcast_message"
+AWAITING_CHECK_VALUE = "awaiting_check_value"
+AWAITING_ADD_VALUE = "awaiting_add_value"
+AWAITING_REMOVE_VALUE = "awaiting_remove_value"
+AWAITING_WL_TYPE = "awaiting_wl_type"
+AWAITING_WL_REASON = "awaiting_wl_reason"
+AWAITING_SEARCH_QUERY = "awaiting_search_query"  # Новое состояние для поиска
 
 # WL types and reasons
 WL_TYPES = ["GTD", "FCFS"]
@@ -172,7 +173,8 @@ async def show_help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "• `/broadcast` - Отправить сообщение пользователям\n"
             "• `/stats` - Показать статистику бота\n"
             "• `/export` - Экспортировать базу данных в CSV формат\n"
-            "• `/import` - Импортировать данные в базу\n\n"
+            "• `/import` - Импортировать данные в базу\n"
+            "• `/search` - Поиск по части значения в базе\n\n"
         )
     
     # Add back button
@@ -310,13 +312,14 @@ async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         ],
         [
             InlineKeyboardButton("📋 База данных", callback_data="admin_list"),
-            InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")
+            InlineKeyboardButton("🔍 Поиск", callback_data="admin_search")
         ],
         [
-            InlineKeyboardButton("📨 Рассылка", callback_data="admin_broadcast"),
-            InlineKeyboardButton("📤 Экспорт", callback_data="admin_export")
+            InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
+            InlineKeyboardButton("📨 Рассылка", callback_data="admin_broadcast")
         ],
         [
+            InlineKeyboardButton("📤 Экспорт", callback_data="admin_export"),
             InlineKeyboardButton("📥 Импорт", callback_data="admin_import")
         ],
         [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
@@ -330,6 +333,7 @@ async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "• *Добавить* - добавление записи в базу данных\n"
         "• *Удалить* - удаление записи из базы данных\n"
         "• *База данных* - просмотр всех записей\n"
+        "• *Поиск* - поиск по части значения\n"
         "• *Статистика* - просмотр статистики использования\n"
         "• *Рассылка* - отправка сообщений пользователям\n"
         "• *Экспорт* - выгрузка базы данных в CSV\n"
@@ -1243,7 +1247,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Добавляем логирование для диагностики
     user_id = update.effective_user.id
     logger.debug(f"Получено сообщение от пользователя {user_id}: '{text}'")
-    logger.debug(f"Текущие флаги пользователя: expecting_check={context.user_data.get('expecting_check')}, expecting_add={context.user_data.get('expecting_add')}, expecting_remove={context.user_data.get('expecting_remove')}")
+    logger.debug(f"Текущие флаги пользователя: expecting_check={context.user_data.get('expecting_check')}, expecting_add={context.user_data.get('expecting_add')}, expecting_remove={context.user_data.get('expecting_remove')}, expecting_search={context.user_data.get('expecting_search')}")
     
     # Handle button presses from persistent keyboard - simplified
     if text == "🔍 Проверить":
@@ -1279,6 +1283,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.debug(f"Обработка сообщения для рассылки: '{text}'")
         context.user_data['expecting_broadcast'] = False
         await start_broadcast_process(update, context)
+        return  # Добавлен явный return, чтобы избежать проверки whitelist
+    elif context.user_data.get('expecting_search'):
+        logger.debug(f"Обработка сообщения для поиска в базе данных: '{text}'")
+        context.user_data['expecting_search'] = False
+        await handle_search_query(update, context)
         return  # Добавлен явный return, чтобы избежать проверки whitelist
     else:
         # Normal message handling - check whitelist
@@ -1393,6 +1402,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await handle_export_button(update, context)
     elif callback_data == "admin_import":
         await show_import_menu(update, context)
+    elif callback_data == "admin_search":  # New search action
+        await show_search_menu(update, context)
+    # Export search results
+    elif callback_data == "export_search_results":
+        await export_search_results(update, context)
     # Import actions
     elif callback_data == "import_append":
         await process_import(update, context, "append")
@@ -1519,7 +1533,8 @@ async def setup_commands(application: Application) -> None:
         BotCommand("broadcast", "Отправить сообщение всем пользователям"),
         BotCommand("stats", "Показать статистику использования бота"),
         BotCommand("export", "Экспортировать базу данных в CSV формат"),
-        BotCommand("import", "Импортировать данные в базу")
+        BotCommand("import", "Импортировать данные в базу"),
+        BotCommand("search", "Поиск по части значения в базе")
     ]
     
     # Set commands for all users
@@ -1895,6 +1910,229 @@ async def show_import_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             parse_mode='Markdown'
         )
 
+async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler for the /search command - starts search process"""
+    user = update.effective_user
+    
+    # Only admins can use advanced search
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text(
+            "⛔ Функция расширенного поиска доступна только администраторам.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔍 Проверить значение", callback_data="action_check")
+            ]])
+        )
+        return
+    
+    await show_search_menu(update, context)
+
+async def show_search_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Show menu for searching values in whitelist"""
+    user = update.effective_user
+    if user.id not in ADMIN_IDS:
+        if update.callback_query:
+            await update.callback_query.answer("У вас нет прав доступа к расширенному поиску.")
+        else:
+            await update.message.reply_text("⛔ У вас нет прав доступа к расширенному поиску.")
+        return ConversationHandler.END
+    
+    message_text = (
+        "*🔍 Расширенный поиск по базе данных*\n\n"
+        "Введите часть значения для поиска. Будут найдены все записи, "
+        "содержащие указанный текст в любой части значения.\n\n"
+        "Например, если ввести `wallet`, будут найдены:\n"
+        "- `my_wallet_address`\n"
+        "- `wallet123`\n"
+        "- `test_wallet_info`\n\n"
+        "Поиск чувствителен к регистру. Ограничение: 20 результатов."
+    )
+    
+    # Keyboard with back button
+    keyboard = [[InlineKeyboardButton("◀️ Назад к меню", callback_data="menu_admin")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            message_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    else:
+        await update.message.reply_text(
+            message_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    
+    # Set flag for next message handling
+    context.user_data['expecting_search'] = True
+    
+    return AWAITING_SEARCH_QUERY
+
+async def handle_search_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Process search query and show results"""
+    user = update.effective_user
+    search_term = update.message.text.strip()
+    
+    logger.debug(f"Обработка поискового запроса: '{search_term}' от пользователя {user.id}")
+    
+    # Reset the flag
+    context.user_data['expecting_search'] = False
+    
+    # Show processing message
+    progress_message = await update.message.reply_text(
+        f"🔍 Ищу '{search_term}' в базе данных...",
+        reply_markup=None
+    )
+    
+    try:
+        # Search the database
+        results = db.search_whitelist(search_term)
+        
+        # Format the results
+        if results:
+            # Create a nice formatted message with results
+            message_text = (
+                f"*✅ Результаты поиска по запросу '{search_term}'*\n\n"
+                f"Найдено записей: {len(results)}\n\n"
+            )
+            
+            # Add each result with formatting
+            for i, result in enumerate(results, 1):
+                if i <= 10:  # Show first 10 results in detail
+                    message_text += (
+                        f"*{i}.* `{result['value']}`\n"
+                        f"   Тип: {result['wl_type']}\n"
+                        f"   Причина: {result['wl_reason']}\n\n"
+                    )
+                elif i == 11:
+                    message_text += f"... и еще {len(results) - 10} записей\n\n"
+            
+            # Add buttons for exporting results or new search
+            keyboard = [
+                [InlineKeyboardButton("🔍 Новый поиск", callback_data="admin_search")],
+                [InlineKeyboardButton("📤 Экспортировать все результаты", callback_data="export_search_results")],
+                [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
+            ]
+            
+            # Store search results in context for potential export
+            context.user_data['search_results'] = results
+            context.user_data['search_term'] = search_term
+        else:
+            message_text = (
+                f"❌ По запросу '{search_term}' ничего не найдено.\n\n"
+                f"Попробуйте изменить поисковый запрос."
+            )
+            
+            # Add buttons for new search or back
+            keyboard = [
+                [InlineKeyboardButton("🔍 Новый поиск", callback_data="admin_search")],
+                [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
+            ]
+        
+        # Update the message with results
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await progress_message.edit_text(
+            message_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    
+    except Exception as e:
+        logger.error(f"Ошибка при поиске в базе данных: {e}")
+        await progress_message.edit_text(
+            f"❌ Произошла ошибка при выполнении поиска: {str(e)}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")
+            ]])
+        )
+    
+    return ConversationHandler.END
+
+async def export_search_results(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Export search results to CSV file"""
+    user = update.effective_user
+    
+    # Only admins can export data
+    if user.id not in ADMIN_IDS:
+        await update.callback_query.answer("У вас нет прав для экспорта данных.")
+        return
+    
+    # Check if there are search results to export
+    if 'search_results' not in context.user_data or not context.user_data['search_results']:
+        await update.callback_query.edit_message_text(
+            "❌ Нет результатов поиска для экспорта.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")
+            ]])
+        )
+        return
+    
+    search_results = context.user_data['search_results']
+    search_term = context.user_data.get('search_term', 'unknown')
+    
+    # Update message to show progress
+    await update.callback_query.edit_message_text(
+        "🔄 Подготовка экспорта результатов поиска...\n\n"
+        "Пожалуйста, подождите."
+    )
+    
+    try:
+        # Export to CSV
+        import csv
+        import os
+        import tempfile
+        from datetime import datetime
+        
+        # Create a temporary file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"search_results_{search_term}_{timestamp}.csv"
+        temp_dir = tempfile.gettempdir()
+        filepath = os.path.join(temp_dir, filename)
+        
+        # Write data to CSV
+        with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
+            fieldnames = ['id', 'value', 'wl_type', 'wl_reason']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            
+            writer.writeheader()
+            for result in search_results:
+                writer.writerow(result)
+        
+        # Send the file
+        with open(filepath, 'rb') as file:
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=file,
+                filename=filename,
+                caption=f"📊 Результаты поиска '{search_term}' ({len(search_results)} записей)"
+            )
+        
+        # Log the export event
+        db.log_event("export_search_results", user.id, {
+            "search_term": search_term,
+            "results_count": len(search_results)
+        }, True)
+        
+        # Clean up
+        try:
+            os.remove(filepath)
+        except Exception as e:
+            logger.warning(f"Could not delete temporary file: {e}")
+        
+        # Return to admin menu
+        await show_admin_menu(update, context)
+        
+    except Exception as e:
+        logger.error(f"Error exporting search results: {e}")
+        
+        await update.callback_query.edit_message_text(
+            f"❌ Ошибка при экспорте результатов поиска: {str(e)}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")
+            ]])
+        )
+
 def main() -> None:
     """Start the bot"""
     # Get the bot token from environment variables
@@ -1928,6 +2166,7 @@ def main() -> None:
     application.add_handler(CommandHandler("admin", show_admin_menu))
     application.add_handler(CommandHandler("export", export_command))
     application.add_handler(CommandHandler("import", import_command))
+    application.add_handler(CommandHandler("search", search_command))
     
     # Add conversation handler for check
     check_conv_handler = ConversationHandler(
@@ -1994,6 +2233,22 @@ def main() -> None:
         per_chat=True
     )
     application.add_handler(broadcast_conv_handler)
+    
+    # Add conversation handler for search
+    search_conv_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("search", show_search_menu),
+            CallbackQueryHandler(show_search_menu, pattern="^admin_search$")
+        ],
+        states={
+            AWAITING_SEARCH_QUERY: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search_query)]
+        },
+        fallbacks=[CallbackQueryHandler(button_callback)],
+        name="search_conversation",
+        persistent=False,
+        per_chat=True
+    )
+    application.add_handler(search_conv_handler)
     
     # Add handler for document uploads (for import)
     application.add_handler(MessageHandler(filters.Document.ALL, handle_import_file))
