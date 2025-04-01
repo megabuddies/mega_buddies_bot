@@ -2112,13 +2112,15 @@ async def error_handler(
             if isinstance(context.error, (ValueError, KeyError, IndexError)):
                 await update.effective_message.reply_text(
                     "⚠️ Произошла ошибка при обработке вашего запроса. "
-                    "Пожалуйста, проверьте ввод и попробуйте снова."
+                    "Пожалуйста, проверьте ввод и попробуйте снова.",
+                    disable_web_page_preview=True  # Используем старый параметр вместо link_preview_options
                 )
             else:
                 # For any other errors, send generic message to user
                 await update.effective_message.reply_text(
                     "🛑 Произошла внутренняя ошибка. Администраторы уведомлены. "
-                    "Пожалуйста, попробуйте позже или обратитесь к администратору."
+                    "Пожалуйста, попробуйте позже или обратитесь к администратору.",
+                    disable_web_page_preview=True  # Используем старый параметр вместо link_preview_options
                 )
 
                 # Try to restore the conversation state if needed
@@ -2196,7 +2198,7 @@ def main() -> None:
     # Set higher persistence and stability options
     defaults = Defaults(
         parse_mode='Markdown',
-        link_preview_options=False,  # Использую актуальный параметр вместо disable_web_page_preview
+        disable_web_page_preview=True,  # Возврат к старому параметру вместо link_preview_options=False
         allow_sending_without_reply=True,
         block=False  # Асинхронная отправка сообщений
     )
