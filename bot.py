@@ -18,9 +18,9 @@ from telegram import (
     BotCommandScopeChat
 )
 from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
+    Application, 
+    CommandHandler, 
+    MessageHandler, 
     CallbackQueryHandler,
     ConversationHandler,
     ContextTypes,
@@ -132,9 +132,9 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     else:
         await update.message.reply_text(
             message_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for the /help command"""
@@ -230,7 +230,7 @@ async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     result = db.check_whitelist(value)
     
     # Log the check event
-    db.log_event("check_whitelist", update.effective_user.id, {"value": value}, bool(result.get("found", False)))
+    db.log_event("check_whitelist", update.effective_user.id, {"value": value}, bool(result["found"]))
     
     # Create reply markup with buttons for next actions
     keyboard = [
@@ -240,12 +240,12 @@ async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     # Prepare response message
-    if result.get("found", False):
+    if result["found"]:
         message_text = (
             f"✅ {user.first_name}, ваше значение найдено в вайтлисте!\n\n"
             f"*Значение:* `{value}`\n"
-            f"*Тип WL:* {result.get('wl_type', 'Не указан')}\n"
-            f"*Причина:* {result.get('wl_reason', 'Не указана')}"
+            f"*Тип WL:* {result['wl_type']}\n"
+            f"*Причина:* {result['wl_reason']}"
         )
     else:
         message_text = (
@@ -546,16 +546,16 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Добавляем запись в вайтлист
     try:
         success = db.add_to_whitelist(value, wl_type, selected_reason)
-        
-        # Log event
+    
+    # Log event
         db.log_event("add_whitelist", update.effective_user.id, {
             "value": value, 
             "wl_type": wl_type, 
             "wl_reason": selected_reason
         }, success)
-        
-        # Create response message
-        if success:
+    
+    # Create response message
+    if success:
             logger.debug(f"Значение '{value}' успешно добавлено в базу данных")
             message_text = (
                 f"✅ Запись успешно добавлена в вайтлист!\n\n"
@@ -563,18 +563,18 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 f"*Тип WL:* {wl_type}\n"
                 f"*Причина:* {selected_reason}"
             )
-        else:
+    else:
             logger.debug(f"Значение '{value}' уже существует в базе данных")
-            message_text = f"⚠️ Значение \"{value}\" уже существует в вайтлисте."
-        
-        # Buttons for next action
-        keyboard = [
-            [InlineKeyboardButton("➕ Добавить еще", callback_data="admin_add")],
-            [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
-            [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
+        message_text = f"⚠️ Значение \"{value}\" уже существует в вайтлисте."
+    
+    # Buttons for next action
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить еще", callback_data="admin_add")],
+        [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
         # Send the response
         await query.edit_message_text(
             message_text,
@@ -600,16 +600,16 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(
-            message_text,
-            reply_markup=reply_markup
-        )
-        
+        message_text,
+        reply_markup=reply_markup
+    )
+    
         # Очищаем данные о добавлении
         if 'add_data' in context.user_data:
             del context.user_data['add_data']
             logger.debug("Данные add_data очищены из контекста пользователя после ошибки")
         
-        return ConversationHandler.END
+    return ConversationHandler.END
 
 async def show_remove_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show menu for removing a value from whitelist"""
