@@ -102,7 +102,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     ]
     
     if is_admin(update.effective_user):
-        keyboard.append([
+    keyboard.append([
             InlineKeyboardButton("➕ Добавить", callback_data="add"),
             InlineKeyboardButton("🔍 Просмотр", callback_data="view")
         ])
@@ -131,10 +131,10 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
     else:
         await update.message.reply_text(
-            menu_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
+        menu_text,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for the /help command"""
@@ -237,7 +237,7 @@ async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data.pop("waiting_for", None)
     else:
         # Direct message case, not from callback flow
-        value = update.message.text.strip()
+    value = update.message.text.strip()
     
     # Check if the value is in the whitelist
     result = db.is_in_whitelist(value)
@@ -591,16 +591,16 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Добавляем запись в вайтлист
     try:
         success = db.add_to_whitelist(value, wl_type, selected_reason)
-        
-        # Log event
+    
+    # Log event
         db.log_event("add_whitelist", update.effective_user.id, {
             "value": value, 
             "wl_type": wl_type, 
             "wl_reason": selected_reason
         }, success)
-        
-        # Create response message
-        if success:
+    
+    # Create response message
+    if success:
             logger.debug(f"Значение '{value}' успешно добавлено в базу данных")
             message_text = (
                 f"✅ Запись успешно добавлена в вайтлист!\n\n"
@@ -608,18 +608,18 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 f"*Тип WL:* {wl_type}\n"
                 f"*Причина:* {selected_reason}"
             )
-        else:
+    else:
             logger.debug(f"Значение '{value}' уже существует в базе данных")
-            message_text = f"⚠️ Значение \"{value}\" уже существует в вайтлисте."
-        
-        # Buttons for next action
-        keyboard = [
-            [InlineKeyboardButton("➕ Добавить еще", callback_data="admin_add")],
-            [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
-            [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
+        message_text = f"⚠️ Значение \"{value}\" уже существует в вайтлисте."
+    
+    # Buttons for next action
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить еще", callback_data="admin_add")],
+        [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
         # Send the response
         await query.edit_message_text(
             message_text,
@@ -645,16 +645,16 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(
-            message_text,
-            reply_markup=reply_markup
-        )
-        
+        message_text,
+        reply_markup=reply_markup
+    )
+    
         # Очищаем данные о добавлении
         if 'add_data' in context.user_data:
             del context.user_data['add_data']
             logger.debug("Данные add_data очищены из контекста пользователя после ошибки")
         
-        return ConversationHandler.END
+    return ConversationHandler.END
 
 async def show_remove_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show menu for removing a value from whitelist"""
@@ -1364,7 +1364,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     query = update.callback_query
     await query.answer()
     data = query.data
-
+    
     logging.info(f"Button callback: {data}, User: {update.effective_user.id}, Username: {update.effective_user.username}")
 
     if data == "check":
@@ -1400,7 +1400,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data["reason"] = reason
         # Complete the add action
         await add_value_to_db(update, context)
-    else:
+        else:
         logging.warning(f"Unknown callback data: {data}")
         await query.edit_message_text(text="Неизвестное действие!")
         await show_main_menu(update, context)
@@ -1429,8 +1429,8 @@ async def show_links_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     # Back button
     keyboard = [[InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
     if update.callback_query:
         await update.callback_query.edit_message_text(
             links_text,
