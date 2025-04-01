@@ -366,8 +366,11 @@ async def show_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         f"За последнюю неделю: {last_week_checks}\n"
     )
     
-    # Add back button
-    keyboard = [[InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]]
+    # Add back buttons
+    keyboard = [
+        [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
+        [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     # Update message or send new
@@ -1351,6 +1354,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif callback_data == "back_to_main":
         logger.debug(f"User {update.effective_user.id} returned to main menu")
         await show_main_menu(update, context)
+    elif callback_data == "menu_admin":
+        logger.debug(f"User {update.effective_user.id} returned to admin menu")
+        await show_admin_menu(update, context)
     
     # Admin menu actions
     elif callback_data == "admin_add":
@@ -1554,14 +1560,22 @@ def main() -> None:
     
     # Add conversation handler for remove
     remove_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("remove", show_remove_menu)],
+        entry_points=[
+            CommandHandler("remove", show_remove_menu),
+            CallbackQueryHandler(show_remove_menu, pattern="^admin_remove$")
+        ],
         states={
             AWAITING_REMOVE_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_value)]
         },
-        fallbacks=[CallbackQueryHandler(button_callback)],
+        fallbacks=[
+            CallbackQueryHandler(button_callback, pattern="^menu_admin$"),
+            CallbackQueryHandler(button_callback, pattern="^back_to_main$"),
+            MessageHandler(filters.COMMAND, button_callback)
+        ],
         name="remove_conversation",
         persistent=False,
-        per_chat=True
+        per_chat=True,
+        per_user=True
     )
     application.add_handler(remove_conv_handler)
     
