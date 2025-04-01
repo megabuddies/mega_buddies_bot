@@ -24,7 +24,7 @@ load_dotenv()
 
 # Configure logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.DEBUG
 )
 logger = logging.getLogger(__name__)
 
@@ -442,6 +442,7 @@ async def handle_add_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     
     # Сохраняем значение в промежуточных данных
     context.user_data['add_data'] = {'value': value}
+    logger.debug(f"Установлены данные add_data: {context.user_data['add_data']}")
     
     # Создаем клавиатуру для выбора типа вайтлиста
     keyboard = []
@@ -474,6 +475,7 @@ async def handle_add_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         parse_mode='Markdown'
     )
     
+    logger.debug(f"Переход в состояние AWAITING_WL_TYPE ({AWAITING_WL_TYPE})")
     return AWAITING_WL_TYPE
 
 async def handle_wl_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -483,9 +485,22 @@ async def handle_wl_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     # Извлекаем выбранный тип из callback_data
     selected_type = query.data.replace("wl_type_", "")
+    logger.debug(f"Выбран тип WL: {selected_type}")
+    
+    # Проверяем наличие данных add_data
+    if 'add_data' not in context.user_data:
+        logger.error("Ошибка: не найдены данные 'add_data' в контексте пользователя")
+        await query.edit_message_text(
+            "❌ Произошла ошибка: данные о добавлении не найдены. Пожалуйста, начните процесс добавления заново.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к добавлению", callback_data="admin_add")
+            ]])
+        )
+        return ConversationHandler.END
     
     # Проверяем, что тип в списке допустимых
     if selected_type not in WL_TYPES:
+        logger.error(f"Ошибка: выбранный тип '{selected_type}' отсутствует в списке допустимых типов")
         await query.edit_message_text(
             "❌ Произошла ошибка при выборе типа. Попробуйте снова.",
             reply_markup=InlineKeyboardMarkup([[
@@ -496,6 +511,7 @@ async def handle_wl_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     # Сохраняем тип вайтлиста
     context.user_data['add_data']['wl_type'] = selected_type
+    logger.debug(f"Обновлены данные add_data: {context.user_data['add_data']}")
     
     # Создаем клавиатуру для выбора причины
     keyboard = []
@@ -518,6 +534,7 @@ async def handle_wl_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         parse_mode='Markdown'
     )
     
+    logger.debug(f"Переход в состояние AWAITING_WL_REASON ({AWAITING_WL_REASON})")
     return AWAITING_WL_REASON
 
 async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -527,9 +544,22 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     
     # Извлекаем выбранную причину из callback_data
     selected_reason = query.data.replace("wl_reason_", "")
+    logger.debug(f"Выбрана причина WL: {selected_reason}")
+    
+    # Проверяем наличие данных add_data
+    if 'add_data' not in context.user_data or 'value' not in context.user_data.get('add_data', {}):
+        logger.error("Ошибка: не найдены полные данные 'add_data' в контексте пользователя")
+        await query.edit_message_text(
+            "❌ Произошла ошибка: данные о добавлении не найдены или неполные. Пожалуйста, начните процесс добавления заново.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к добавлению", callback_data="admin_add")
+            ]])
+        )
+        return ConversationHandler.END
     
     # Проверяем, что причина в списке допустимых
     if selected_reason not in WL_REASONS:
+        logger.error(f"Ошибка: выбранная причина '{selected_reason}' отсутствует в списке допустимых причин")
         await query.edit_message_text(
             "❌ Произошла ошибка при выборе причины. Попробуйте снова.",
             reply_markup=InlineKeyboardMarkup([[
@@ -542,6 +572,8 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     add_data = context.user_data.get('add_data', {})
     value = add_data.get('value', '')
     wl_type = add_data.get('wl_type', 'FCFS')
+    
+    logger.debug(f"Данные для добавления в базу: value='{value}', type='{wl_type}', reason='{selected_reason}'")
     
     # Добавляем запись в вайтлист
     try:
@@ -585,6 +617,7 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # Очищаем данные о добавлении
         if 'add_data' in context.user_data:
             del context.user_data['add_data']
+            logger.debug("Данные add_data очищены из контекста пользователя")
         
         return ConversationHandler.END
         
@@ -606,6 +639,7 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # Очищаем данные о добавлении
         if 'add_data' in context.user_data:
             del context.user_data['add_data']
+            logger.debug("Данные add_data очищены из контекста пользователя после ошибки")
         
         return ConversationHandler.END
 
@@ -1315,8 +1349,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # Extract the callback data
     data = query.data
     
-    # Пропускаем callback_data для wl_type и wl_reason, так как они обрабатываются в ConversationHandler
-    if data.startswith("wl_type_") or data.startswith("wl_reason_"):
+    # Логируем все callback_data для диагностики
+    logger.debug(f"Received callback data: {data}")
+    
+    # Проверяем, находится ли пользователь в процессе добавления в whitelist
+    if data.startswith("wl_type_") and context.user_data.get('add_data'):
+        # Вручную вызываем обработчик типа вайтлиста
+        await handle_wl_type(update, context)
+        return
+    elif data.startswith("wl_reason_") and context.user_data.get('add_data'):
+        # Вручную вызываем обработчик причины вайтлиста
+        await handle_wl_reason(update, context)
         return
     
     # Main menu actions
@@ -1420,19 +1463,24 @@ def main() -> None:
     
     # Add conversation handler for add
     add_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("add", show_add_menu)],
+        entry_points=[
+            CommandHandler("add", show_add_menu),
+            CallbackQueryHandler(show_add_menu, pattern="^admin_add$")
+        ],
         states={
             AWAITING_ADD_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_value)],
-            AWAITING_WL_TYPE: [CallbackQueryHandler(handle_wl_type, pattern=r"^wl_type_")],
-            AWAITING_WL_REASON: [CallbackQueryHandler(handle_wl_reason, pattern=r"^wl_reason_")]
+            AWAITING_WL_TYPE: [CallbackQueryHandler(handle_wl_type, pattern="^wl_type_")],
+            AWAITING_WL_REASON: [CallbackQueryHandler(handle_wl_reason, pattern="^wl_reason_")]
         },
         fallbacks=[
-            CallbackQueryHandler(button_callback, pattern=r"^menu_admin$"),
-            CallbackQueryHandler(button_callback)
+            CallbackQueryHandler(button_callback, pattern="^menu_admin$"),
+            CallbackQueryHandler(button_callback, pattern="^back_to_main$"),
+            MessageHandler(filters.COMMAND, button_callback)
         ],
         name="add_conversation",
         persistent=False,
-        per_chat=True
+        per_chat=True,
+        per_user=True
     )
     application.add_handler(add_conv_handler)
     
@@ -1462,13 +1510,13 @@ def main() -> None:
     )
     application.add_handler(broadcast_conv_handler)
     
-    # Add callback query handler
-    application.add_handler(CallbackQueryHandler(button_callback))
-    
     # Add command handler for menu command
     application.add_handler(CommandHandler("menu", show_main_menu))
     
-    # Add message handler - переместил в самый конец, после всех других обработчиков
+    # Add callback query handler - перемещено после ConversationHandler, но перед MessageHandler
+    application.add_handler(CallbackQueryHandler(button_callback))
+    
+    # Add message handler - последним, чтобы перехватывать только те сообщения, которые не обработаны другими обработчиками
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Set up the menu commands
