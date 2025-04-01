@@ -181,23 +181,23 @@ async def show_help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
 async def show_check_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Show the check value prompt"""
-    keyboard = [[InlineKeyboardButton("◀️ Назад в меню", callback_data="back_to_main")]]
+    """Show menu for checking a value against whitelist"""
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    check_text = (
-        "*🔍 Проверка данных*\n\n"
-        "Пожалуйста, введите значение, которое хотите проверить в базе данных.\n\n"
-        "_Например, номер телефона, ID, имя или другой идентификатор._"
-    )
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            "Введите значение для проверки в базе данных:",
+            reply_markup=reply_markup
+        )
+    else:
+        await update.message.reply_text(
+            "Введите значение для проверки в базе данных:",
+            reply_markup=reply_markup
+        )
     
-    await update_or_send_message(
-        update,
-        context,
-        check_text,
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
+    # Устанавливаем флаг, чтобы знать, что следующее сообщение - для проверки
+    context.user_data['expecting_check'] = True
     
     return AWAITING_CHECK_VALUE
 
@@ -409,6 +409,9 @@ async def show_add_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             reply_markup=reply_markup
         )
     
+    # Устанавливаем флаг, чтобы знать, что следующее сообщение - для добавления в вайтлист
+    context.user_data['expecting_add'] = True
+    
     return AWAITING_ADD_VALUE
 
 async def handle_add_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -461,6 +464,9 @@ async def show_remove_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             "Введите значение для удаления из вайтлиста:",
             reply_markup=reply_markup
         )
+    
+    # Устанавливаем флаг, чтобы знать, что следующее сообщение - для удаления из вайтлиста
+    context.user_data['expecting_remove'] = True
     
     return AWAITING_REMOVE_VALUE
 
@@ -1066,15 +1072,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if context.user_data.get('expecting_check'):
         context.user_data['expecting_check'] = False
         await handle_check_value(update, context)
+        return
     elif context.user_data.get('expecting_add'):
         context.user_data['expecting_add'] = False
         await handle_add_value(update, context)
+        return
     elif context.user_data.get('expecting_remove'):
         context.user_data['expecting_remove'] = False
         await handle_remove_value(update, context)
+        return
     elif context.user_data.get('expecting_broadcast'):
         context.user_data['expecting_broadcast'] = False
         await start_broadcast_process(update, context)
+        return
     else:
         # Normal message handling - check whitelist
         # Treat any text as a check query for simplicity
