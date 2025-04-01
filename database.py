@@ -443,149 +443,89 @@ class Database:
         result = cursor.fetchone()[0]
         conn.close()
         return result
-    
-    def export_whitelist_to_csv(self, filename: str = "whitelist_export.csv") -> bool:
-        """Export whitelist data to a CSV file
-        
-        Args:
-            filename: The name of the CSV file to export to
-            
-        Returns:
-            bool: True if export was successful, False otherwise
-        """
-        try:
-            import csv
-            from datetime import datetime
-            
-            # Get all whitelist entries
-            whitelist_data = self.get_all_whitelist()
-            
-            if not whitelist_data:
-                print("No data to export")
-                return False
-            
-            # Add timestamp to filename to avoid overwriting
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename_with_timestamp = f"{filename.split('.')[0]}_{timestamp}.csv"
-            
-            # Write data to CSV file
-            with open(filename_with_timestamp, 'w', newline='', encoding='utf-8') as csvfile:
-                fieldnames = ['id', 'value', 'wl_type', 'wl_reason']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                
-                writer.writeheader()
-                for entry in whitelist_data:
-                    writer.writerow(entry)
-            
-            print(f"Export successful: {filename_with_timestamp}")
-            return True, filename_with_timestamp
-        except Exception as e:
-            print(f"Error exporting whitelist to CSV: {e}")
-            return False, None
 
-    def import_whitelist_from_csv(self, filepath: str, mode: str = "append") -> tuple:
+    def import_whitelist_from_csv(self, filename: str, mode: str = "append") -> tuple:
         """Import whitelist data from a CSV file
         
         Args:
-            filepath: Path to CSV file to import
-            mode: 'append' to add to existing data, 'replace' to replace all data
+            filename: The path to the CSV file
+            mode: 'append' to add new entries, 'replace' to replace all existing entries
             
         Returns:
-            tuple: (success, stats) where stats is a dict with import statistics
+            tuple: (success, stats) - where stats contains counts of added/skipped entries
         """
         try:
             import csv
             import os
             
-            if not os.path.exists(filepath):
-                return False, {"error": f"Файл {filepath} не найден"}
+            if not os.path.exists(filename):
+                return False, {"error": f"File not found: {filename}"}
             
             # Stats to return
             stats = {
-                "total_processed": 0,
                 "added": 0,
                 "skipped": 0,
-                "errors": 0,
-                "deleted": 0
+                "total": 0,
+                "errors": 0
             }
             
-            # If mode is replace, clear the whitelist table first
+            # If replace mode, clear existing whitelist
             if mode == "replace":
                 conn = sqlite3.connect(self.db_name)
                 cursor = conn.cursor()
-                
-                # Count existing records
-                cursor.execute("SELECT COUNT(*) FROM whitelist")
-                stats["deleted"] = cursor.fetchone()[0]
-                
-                # Delete all records
                 cursor.execute("DELETE FROM whitelist")
                 conn.commit()
                 conn.close()
+                print(f"Cleared whitelist table for replacement import")
             
-            # Read CSV file
-            with open(filepath, 'r', encoding='utf-8') as csvfile:
-                # Try to determine if file has headers
-                sample = csvfile.read(2048)
-                csvfile.seek(0)  # Reset file pointer
+            # Open and process CSV file
+            with open(filename, 'r', encoding='utf-8') as csvfile:
+                csv_reader = csv.DictReader(csvfile)
                 
-                has_header = csv.Sniffer().has_header(sample)
-                reader = csv.reader(csvfile)
-                
-                if has_header:
-                    # Skip header row
-                    next(reader)
-                
-                conn = sqlite3.connect(self.db_name)
-                cursor = conn.cursor()
+                # Validate columns
+                required_columns = ['value']
+                if not all(col in csv_reader.fieldnames for col in required_columns):
+                    return False, {"error": f"CSV file must contain at least a 'value' column"}
                 
                 # Process each row
-                for row in reader:
-                    stats["total_processed"] += 1
+                for row in csv_reader:
+                    stats["total"] += 1
+                    
+                    # Get values from row with defaults
+                    value = row.get('value', '').strip()
+                    wl_type = row.get('wl_type', 'FCFS').strip()
+                    wl_reason = row.get('wl_reason', 'Fluffy holder').strip()
+                    
+                    # Skip empty values
+                    if not value:
+                        stats["skipped"] += 1
+                        continue
                     
                     try:
-                        # Check if we have enough columns
-                        if len(row) >= 1:
-                            value = row[0].strip()
-                            
-                            # Set defaults for optional columns
-                            wl_type = "FCFS"
-                            wl_reason = "Imported from CSV"
-                            
-                            # If more columns exist, use them
-                            if len(row) >= 2 and row[1].strip():
-                                wl_type = row[1].strip()
-                            if len(row) >= 3 and row[2].strip():
-                                wl_reason = row[2].strip()
-                            
-                            # Skip empty values
-                            if not value:
+                        # In append mode, if value exists, skip it
+                        if mode == "append":
+                            conn = sqlite3.connect(self.db_name)
+                            cursor = conn.cursor()
+                            cursor.execute("SELECT id FROM whitelist WHERE value = ?", (value,))
+                            if cursor.fetchone():
+                                conn.close()
                                 stats["skipped"] += 1
                                 continue
-                            
-                            # Check if value already exists (only relevant for append mode)
-                            if mode == "append":
-                                cursor.execute("SELECT id FROM whitelist WHERE value = ?", (value,))
-                                if cursor.fetchone():
-                                    stats["skipped"] += 1
-                                    continue
-                            
-                            # Insert the value
-                            cursor.execute(
-                                "INSERT INTO whitelist (value, wl_type, wl_reason) VALUES (?, ?, ?)",
-                                (value, wl_type, wl_reason)
-                            )
+                            conn.close()
+                        
+                        # Add to whitelist
+                        success = self.add_to_whitelist(value, wl_type, wl_reason)
+                        if success:
                             stats["added"] += 1
                         else:
                             stats["skipped"] += 1
                     except Exception as e:
-                        print(f"Error processing row: {row} - {e}")
+                        print(f"Error processing row {stats['total']}: {e}")
                         stats["errors"] += 1
-                
-                conn.commit()
-                conn.close()
             
+            print(f"Import completed: {stats}")
             return True, stats
+            
         except Exception as e:
             print(f"Error importing whitelist from CSV: {e}")
             return False, {"error": str(e)} 
