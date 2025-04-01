@@ -2001,7 +2001,6 @@ def main() -> None:
     defaults = Defaults(
         parse_mode='Markdown',
         disable_web_page_preview=True,
-        timeout=60,  # Увеличенный таймаут для операций
         allow_sending_without_reply=True,
         block=False  # Асинхронная отправка сообщений
     )
