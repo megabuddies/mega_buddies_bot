@@ -170,7 +170,8 @@ async def show_help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "• `/remove` - Удалить значение из базы данных\n"
             "• `/list` - Показать все значения в базе данных\n"
             "• `/broadcast` - Отправить сообщение пользователям\n"
-            "• `/stats` - Показать статистику бота\n\n"
+            "• `/stats` - Показать статистику бота\n"
+            "• `/export` - Экспортировать базу данных в CSV формат\n\n"
         )
     
     # Add back button
@@ -311,7 +312,8 @@ async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")
         ],
         [
-            InlineKeyboardButton("📨 Рассылка сообщений", callback_data="admin_broadcast")
+            InlineKeyboardButton("📨 Рассылка сообщений", callback_data="admin_broadcast"),
+            InlineKeyboardButton("📤 Экспорт данных", callback_data="admin_export")
         ],
         [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
     ]
@@ -326,6 +328,7 @@ async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "• *База данных* - просмотр всех записей\n"
         "• *Статистика* - просмотр статистики использования\n"
         "• *Рассылка* - отправка сообщений пользователям\n"
+        "• *Экспорт* - выгрузка базы данных в CSV\n"
     )
     
     await update_or_send_message(
@@ -1381,6 +1384,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await show_broadcast_menu(update, context)
     elif callback_data == "admin_stats":
         await show_stats_menu(update, context)
+    elif callback_data == "admin_export":
+        await handle_export_button(update, context)
     # Whitelist pagination
     elif callback_data == "whitelist_next" or callback_data == "whitelist_prev":
         await handle_whitelist_pagination(update, context)
@@ -1485,7 +1490,8 @@ async def setup_commands(application: Application) -> None:
         BotCommand("add", "Добавить новую запись в вайтлист"),
         BotCommand("remove", "Удалить запись из вайтлиста"),
         BotCommand("broadcast", "Отправить сообщение всем пользователям"),
-        BotCommand("stats", "Показать статистику использования бота")
+        BotCommand("stats", "Показать статистику использования бота"),
+        BotCommand("export", "Экспортировать базу данных в CSV формат")
     ]
     
     # Set commands for all users
@@ -1515,6 +1521,103 @@ async def setup_commands(application: Application) -> None:
     )
     
     logger.info("Bot commands and descriptions set up successfully")
+
+async def handle_export_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle export button click"""
+    user = update.effective_user
+    
+    # Only admins can export data
+    if user.id not in ADMIN_IDS:
+        await update.callback_query.answer("У вас нет прав для экспорта данных.")
+        return
+    
+    # Change button message to show progress
+    await update.callback_query.edit_message_text(
+        "🔄 Подготовка экспорта данных...\n\n"
+        "Пожалуйста, подождите. Файл будет отправлен в ближайшие секунды."
+    )
+    
+    try:
+        # Export data to CSV
+        success, filename = db.export_whitelist_to_csv()
+        
+        if success:
+            # Send the generated file to the user
+            with open(filename, 'rb') as file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=file,
+                    filename=filename,
+                    caption="📊 Экспорт базы данных вайтлиста"
+                )
+            
+            # Log the export event
+            db.log_event("export_data", user.id, {"format": "csv", "filename": filename}, True)
+            
+            # Return to admin menu
+            await show_admin_menu(update, context)
+        else:
+            # Show error and go back to admin menu
+            keyboard = [[InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.callback_query.edit_message_text(
+                "❌ Не удалось экспортировать данные. Возможно, база данных пуста.",
+                reply_markup=reply_markup
+            )
+    except Exception as e:
+        logger.error(f"Error exporting data: {e}")
+        
+        # Show error and go back to admin menu
+        keyboard = [[InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.callback_query.edit_message_text(
+            f"❌ Ошибка при экспорте данных: {str(e)}",
+            reply_markup=reply_markup
+        )
+
+async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler for the /export command - exports whitelist to CSV"""
+    user = update.effective_user
+    
+    # Only admins can export data
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для экспорта данных.")
+        return
+    
+    # Send a message that export is in progress
+    progress_message = await update.message.reply_text(
+        "🔄 Подготовка экспорта данных...",
+        reply_markup=None
+    )
+    
+    try:
+        # Export data to CSV
+        success, filename = db.export_whitelist_to_csv()
+        
+        if success:
+            # Send the generated file to the user
+            await progress_message.edit_text("✅ Данные успешно экспортированы! Отправляю файл...")
+            
+            with open(filename, 'rb') as file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=file,
+                    filename=filename,
+                    caption="📊 Экспорт базы данных вайтлиста"
+                )
+            
+            # Log the export event
+            db.log_event("export_data", user.id, {"format": "csv", "filename": filename}, True)
+            
+            # Clean up the progress message
+            await progress_message.delete()
+        else:
+            await progress_message.edit_text("❌ Не удалось экспортировать данные. Возможно, база данных пуста.")
+    except Exception as e:
+        logger.error(f"Error exporting data: {e}")
+        await progress_message.edit_text(f"❌ Ошибка при экспорте данных: {str(e)}")
 
 def main() -> None:
     """Start the bot"""
@@ -1547,6 +1650,7 @@ def main() -> None:
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     application.add_handler(CommandHandler("admin", show_admin_menu))
+    application.add_handler(CommandHandler("export", export_command))
     
     # Add conversation handler for check
     check_conv_handler = ConversationHandler(

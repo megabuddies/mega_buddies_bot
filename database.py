@@ -442,4 +442,43 @@ class Database:
             
         result = cursor.fetchone()[0]
         conn.close()
-        return result 
+        return result
+    
+    def export_whitelist_to_csv(self, filename: str = "whitelist_export.csv") -> bool:
+        """Export whitelist data to a CSV file
+        
+        Args:
+            filename: The name of the CSV file to export to
+            
+        Returns:
+            bool: True if export was successful, False otherwise
+        """
+        try:
+            import csv
+            from datetime import datetime
+            
+            # Get all whitelist entries
+            whitelist_data = self.get_all_whitelist()
+            
+            if not whitelist_data:
+                print("No data to export")
+                return False
+            
+            # Add timestamp to filename to avoid overwriting
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename_with_timestamp = f"{filename.split('.')[0]}_{timestamp}.csv"
+            
+            # Write data to CSV file
+            with open(filename_with_timestamp, 'w', newline='', encoding='utf-8') as csvfile:
+                fieldnames = ['id', 'value', 'wl_type', 'wl_reason']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                
+                writer.writeheader()
+                for entry in whitelist_data:
+                    writer.writerow(entry)
+            
+            print(f"Export successful: {filename_with_timestamp}")
+            return True, filename_with_timestamp
+        except Exception as e:
+            print(f"Error exporting whitelist to CSV: {e}")
+            return False, None 
