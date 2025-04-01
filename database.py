@@ -1,169 +1,103 @@
 import sqlite3
 import datetime
-import time
-import os
-import logging
-from typing import List, Optional, Tuple, Dict, Any, Union
-
-# Configure logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-# Database retry settings
-DB_MAX_RETRIES = 3
-DB_RETRY_DELAY = 0.5  # seconds
+from typing import List, Optional, Tuple, Dict, Any
+from contextlib import contextmanager
 
 class Database:
     def __init__(self, db_name: str = "mega_buddies.db"):
         self.db_name = db_name
-        self.connection = None
-        self._connect()
         self._create_tables()
         self._migrate_database()
+        
+        # Cache initialization
+        self._cache = {}
+        self._cache_ttl = {}
+        self._cache_enabled = True
 
-    def _connect(self):
-        """Establish a connection to the database with extended timeout"""
+    @contextmanager
+    def _get_connection(self):
+        """Context manager for database connections to ensure proper cleanup"""
+        conn = None
         try:
-            self.connection = sqlite3.connect(
-                self.db_name, 
-                timeout=20,  # Extended timeout for busy database
-                check_same_thread=False  # Allow access from multiple threads
-            )
-            # Enable foreign keys
-            cursor = self.connection.cursor()
-            cursor.execute("PRAGMA foreign_keys = ON")
-            self.connection.commit()
-        except sqlite3.Error as e:
-            logger.error(f"Database connection error: {e}")
-            raise
-
-    def _execute_with_retry(self, query, params=None, commit=True):
-        """Execute a database query with retry logic for increased stability"""
-        for attempt in range(DB_MAX_RETRIES):
-            try:
-                # Ensure connection is valid
-                if not self.connection:
-                    self._connect()
-                
-                cursor = self.connection.cursor()
-                if params:
-                    cursor.execute(query, params)
-                else:
-                    cursor.execute(query)
-                
-                if commit:
-                    self.connection.commit()
-                
-                return cursor
-            except sqlite3.Error as e:
-                # Handle specific errors
-                if "database is locked" in str(e).lower():
-                    if attempt < DB_MAX_RETRIES - 1:
-                        logger.warning(f"Database locked, retrying ({attempt+1}/{DB_MAX_RETRIES})")
-                        time.sleep(DB_RETRY_DELAY * (2 ** attempt))  # Exponential backoff
-                        continue
-                elif "no such table" in str(e).lower():
-                    logger.error(f"Table does not exist: {e}")
-                    self._create_tables()  # Try to recreate tables
-                    if attempt < DB_MAX_RETRIES - 1:
-                        continue
-                elif "database disk image is malformed" in str(e).lower():
-                    logger.critical(f"Database corruption detected: {e}")
-                    self._recover_database()
-                    if attempt < DB_MAX_RETRIES - 1:
-                        continue
-                else:
-                    logger.error(f"Database error: {e}")
-                
-                # For connection errors, try to reconnect
-                if "unable to open database file" in str(e).lower() or "no such table" in str(e).lower():
-                    try:
-                        self.connection = None
-                        self._connect()
-                        if attempt < DB_MAX_RETRIES - 1:
-                            continue
-                    except Exception as conn_e:
-                        logger.error(f"Failed to reconnect to database: {conn_e}")
-                
-                # Last attempt failed, raise the exception
-                if attempt == DB_MAX_RETRIES - 1:
-                    raise
-    
-    def _recover_database(self):
-        """Attempt to recover a corrupted database"""
-        try:
-            logger.warning("Attempting to recover corrupted database")
-            
-            # Close current connection
-            if self.connection:
+            conn = sqlite3.connect(self.db_name)
+            yield conn
+        finally:
+            if conn:
                 try:
-                    self.connection.close()
-                except:
+                    conn.close()
+                except Exception:
                     pass
-                self.connection = None
+                    
+    def _execute_query(self, query: str, params=(), fetch_one=False, fetch_all=False, commit=False):
+        """Execute a query with proper connection handling"""
+        result = None
+        
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
             
-            # Backup the corrupted database
-            backup_name = f"{self.db_name}.corrupted.{int(time.time())}"
-            if os.path.exists(self.db_name):
-                try:
-                    os.rename(self.db_name, backup_name)
-                    logger.info(f"Corrupted database backed up to {backup_name}")
-                except Exception as e:
-                    logger.error(f"Failed to backup corrupted database: {e}")
-            
-            # Create fresh connection and tables
-            self._connect()
-            self._create_tables()
-            logger.info("Database recovery completed")
-        except Exception as e:
-            logger.critical(f"Database recovery failed: {e}")
-            raise
+            if fetch_one:
+                result = cursor.fetchone()
+            elif fetch_all:
+                result = cursor.fetchall()
+            elif commit:
+                conn.commit()
+                result = cursor.rowcount
+                
+        return result
 
     def _create_tables(self):
         """Create necessary tables if they don't exist"""
-        try:
-            cursor = self._execute_with_retry('''
-            CREATE TABLE IF NOT EXISTS whitelist (
-                id INTEGER PRIMARY KEY,
-                value TEXT NOT NULL,
-                wl_type TEXT DEFAULT 'FCFS',
-                wl_reason TEXT DEFAULT 'Fluffy holder'
-            )
-            ''', commit=False)
-            
-            # Create users table to track all bot users
-            cursor = self._execute_with_retry('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                last_name TEXT,
-                chat_id INTEGER UNIQUE,
-                joined_at TIMESTAMP DEFAULT (datetime('now')),
-                last_activity TIMESTAMP
-            )
-            ''', commit=False)
-            
-            # Create events table for statistics
-            cursor = self._execute_with_retry('''
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY,
-                event_type TEXT NOT NULL,
-                user_id INTEGER,
-                timestamp TIMESTAMP DEFAULT (datetime('now')),
-                data TEXT,
-                success INTEGER DEFAULT 0,
-                FOREIGN KEY (user_id) REFERENCES users (user_id)
-            )
-            ''', commit=True)
-            
-            logger.info("Database tables created/verified successfully")
-        except Exception as e:
-            logger.error(f"Error creating database tables: {e}")
-            raise
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        
+        # Create whitelist table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS whitelist (
+            id INTEGER PRIMARY KEY,
+            value TEXT NOT NULL,
+            wl_type TEXT DEFAULT 'FCFS',
+            wl_reason TEXT DEFAULT 'Fluffy holder'
+        )
+        ''')
+        
+        # Create users table to track all bot users
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            last_name TEXT,
+            chat_id INTEGER UNIQUE,
+            joined_at TIMESTAMP DEFAULT (datetime('now'))
+        )
+        ''')
+        
+        # Create events table for statistics
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY,
+            event_type TEXT NOT NULL,
+            user_id INTEGER,
+            timestamp TIMESTAMP DEFAULT (datetime('now')),
+            data TEXT,
+            success INTEGER DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+        ''')
+        
+        # Create indexes for faster queries
+        # Index on whitelist value for faster lookups
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_whitelist_value ON whitelist(value)')
+        
+        # Index on event_type and timestamp for statistics queries
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_events_type_time ON events(event_type, timestamp)')
+        
+        # Index on users last_activity for active users queries
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_last_activity ON users(last_activity)')
+        
+        conn.commit()
+        conn.close()
     
     def _migrate_database(self):
         """Check and update database schema if needed"""
@@ -231,99 +165,120 @@ class Database:
     def add_to_whitelist(self, value: str, wl_type: str = "FCFS", wl_reason: str = "Fluffy holder") -> bool:
         """Add a value to the whitelist with type and reason"""
         try:
-            # Check if value already exists
-            cursor = self._execute_with_retry(
-                "SELECT id FROM whitelist WHERE value = ?", 
-                (value,),
-                commit=False
-            )
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            # Проверяем, существует ли уже это значение
+            cursor.execute("SELECT id FROM whitelist WHERE value = ?", (value,))
             if cursor.fetchone():
+                conn.close()
                 return False
                 
-            # Add new value
-            self._execute_with_retry(
+            cursor.execute(
                 "INSERT INTO whitelist (value, wl_type, wl_reason) VALUES (?, ?, ?)", 
-                (value, wl_type, wl_reason),
-                commit=True
+                (value, wl_type, wl_reason)
             )
+            conn.commit()
+            conn.close()
+            
+            # Invalidate cache keys that might contain stale data after this change
+            self._invalidate_cache_key(f"whitelist_check_{value}")
+            self._invalidate_cache_key("whitelist_count")
+            
             return True
         except Exception as e:
-            logger.error(f"Error adding to whitelist: {e}")
+            print(f"Error adding to whitelist: {e}")
+            conn.close()
             return False
 
     def remove_from_whitelist(self, value: str) -> bool:
         """Remove a value from the whitelist"""
-        try:
-            cursor = self._execute_with_retry(
-                "DELETE FROM whitelist WHERE value = ?", 
-                (value,),
-                commit=True
-            )
-            return cursor.rowcount > 0
-        except Exception as e:
-            logger.error(f"Error removing from whitelist: {e}")
-            return False
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM whitelist WHERE value = ?", (value,))
+        affected = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        
+        # Invalidate cache keys that might contain stale data after this change
+        self._invalidate_cache_key(f"whitelist_check_{value}")
+        self._invalidate_cache_key("whitelist_count")
+        
+        return affected
 
     def check_whitelist(self, value: str) -> Dict[str, Any]:
         """Check if a value exists in the whitelist and return details"""
-        try:
-            cursor = self._execute_with_retry(
-                "SELECT id, value, wl_type, wl_reason FROM whitelist WHERE value = ?", 
-                (value,),
-                commit=False
-            )
-            row = cursor.fetchone()
-            
-            if row:
-                result = {
-                    "found": True,
-                    "id": row[0],
-                    "value": row[1],
-                    "wl_type": row[2],
-                    "wl_reason": row[3]
-                }
-            else:
-                result = {"found": False}
-            
-            # Record the check event
-            self.log_event("check", None, {"value": value, "result": result["found"]}, result["found"])
-            
-            return result
-        except Exception as e:
-            logger.error(f"Error checking whitelist: {e}")
-            # Return a safe default in case of error
-            return {"found": False, "error": str(e)}
+        # Try to get from cache first
+        cache_key = f"whitelist_check_{value}"
+        cached_result = self._get_from_cache(cache_key)
+        if cached_result is not None:
+            # We still record the check event, but don't query DB again
+            self.log_event("check", None, {"value": value, "result": cached_result["found"], "cached": True}, cached_result["found"])
+            return cached_result
+        
+        # Not in cache, query the database
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, value, wl_type, wl_reason FROM whitelist WHERE value = ?", (value,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            result = {
+                "found": True,
+                "id": row[0],
+                "value": row[1],
+                "wl_type": row[2],
+                "wl_reason": row[3]
+            }
+        else:
+            result = {"found": False}
+        
+        # Record the check event
+        self.log_event("check", None, {"value": value, "result": result["found"]}, result["found"])
+        
+        # Cache the result for 5 minutes
+        self._set_cache(cache_key, result, 300)
+        
+        return result
 
     def get_all_whitelist(self) -> List[Dict[str, Any]]:
         """Get all values in the whitelist with their details"""
-        try:
-            cursor = self._execute_with_retry(
-                "SELECT id, value, wl_type, wl_reason FROM whitelist",
-                commit=False
-            )
-            rows = cursor.fetchall()
-            
-            result = []
-            for row in rows:
-                result.append({
-                    "id": row[0],
-                    "value": row[1],
-                    "wl_type": row[2],
-                    "wl_reason": row[3]
-                })
-            
-            return result
-        except Exception as e:
-            logger.error(f"Error getting all whitelist entries: {e}")
-            return []
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, value, wl_type, wl_reason FROM whitelist")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        result = []
+        for row in rows:
+            result.append({
+                "id": row[0],
+                "value": row[1],
+                "wl_type": row[2],
+                "wl_reason": row[3]
+            })
+        
+        return result
     
     def get_whitelist_count(self) -> int:
         """Get the count of items in the whitelist"""
+        # Try to get from cache first
+        cache_key = "whitelist_count"
+        cached_result = self._get_from_cache(cache_key)
+        if cached_result is not None:
+            return cached_result
+        
+        # Not in cache, query the database
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM whitelist")
         result = cursor.fetchone()[0]
         conn.close()
+        
+        # Cache the result for 5 minutes
+        self._set_cache(cache_key, result, 300)
+        
         return result
 
     def add_user(self, user_id: int, username: Optional[str], first_name: str, 
@@ -538,19 +493,47 @@ class Database:
 
     def get_total_users(self) -> int:
         """Get the total number of users in the database"""
+        # Try to get from cache first
+        cache_key = "total_users"
+        cached_result = self._get_from_cache(cache_key)
+        if cached_result is not None:
+            return cached_result
+            
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM users")
         result = cursor.fetchone()[0]
         conn.close()
+        
+        # Cache the result for 5 minutes
+        self._set_cache(cache_key, result, 300)
+        
         return result
     
     def get_active_users(self, days: int = 7) -> int:
         """Get the number of active users in the last specified days"""
-        return self.get_active_users_count(days)
+        # Try to get from cache first
+        cache_key = f"active_users_{days}"
+        cached_result = self._get_from_cache(cache_key)
+        if cached_result is not None:
+            return cached_result
+            
+        # Not cached, query the database
+        result = self.get_active_users_count(days)
+        
+        # Cache the result for 5 minutes
+        self._set_cache(cache_key, result, 300)
+        
+        return result
     
     def get_checks_count(self, days: int = None) -> int:
         """Get the count of check operations, optionally filtered by time period"""
+        # Try to get from cache first
+        cache_key = f"checks_count_{days if days is not None else 'all'}"
+        cached_result = self._get_from_cache(cache_key)
+        if cached_result is not None:
+            return cached_result
+            
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
         
@@ -568,6 +551,11 @@ class Database:
             
         result = cursor.fetchone()[0]
         conn.close()
+        
+        # Cache the result - shorter time for recent checks (1 minute), longer for all-time (5 minutes)
+        cache_time = 60 if days is not None and days <= 1 else 300
+        self._set_cache(cache_key, result, cache_time)
+        
         return result
 
     def import_whitelist_from_csv(self, file_path: str, mode: str = "append") -> tuple:
@@ -593,12 +581,12 @@ class Database:
             
             # If replacing, clear existing whitelist
             if mode == "replace":
-                try:
-                    self._execute_with_retry("DELETE FROM whitelist", commit=True)
-                    logger.info("Cleared existing whitelist for replacement import")
-                except Exception as e:
-                    logger.error(f"Error clearing whitelist for replacement: {e}")
-                    return False, {"error": f"Failed to clear database: {str(e)}"}
+                conn = sqlite3.connect(self.db_name)
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM whitelist")
+                conn.commit()
+                conn.close()
+                print(f"Cleared existing whitelist for replacement import")
             
             # Read and process CSV file
             with open(file_path, 'r', encoding='utf-8') as csvfile:
@@ -660,12 +648,12 @@ class Database:
                     else:
                         stats["skipped"] += 1
             
-            logger.info(f"Import completed. Processed: {stats['processed']}, Added: {stats['added']}, "
+            print(f"Import completed. Processed: {stats['processed']}, Added: {stats['added']}, "
                   f"Skipped: {stats['skipped']}, Invalid: {stats['invalid']}")
             return True, stats
             
         except Exception as e:
-            logger.error(f"Error importing whitelist from CSV: {e}")
+            print(f"Error importing whitelist from CSV: {e}")
             return False, {"error": str(e)}
 
     def export_whitelist_to_csv(self, filename: str = "whitelist_export.csv") -> tuple:
@@ -685,7 +673,7 @@ class Database:
             whitelist_data = self.get_all_whitelist()
             
             if not whitelist_data:
-                logger.warning("No data to export")
+                print("No data to export")
                 return False, None
             
             # Add timestamp to filename to avoid overwriting
@@ -701,8 +689,45 @@ class Database:
                 for entry in whitelist_data:
                     writer.writerow(entry)
             
-            logger.info(f"Export successful: {filename_with_timestamp}")
+            print(f"Export successful: {filename_with_timestamp}")
             return True, filename_with_timestamp
         except Exception as e:
-            logger.error(f"Error exporting whitelist to CSV: {e}")
-            return False, None 
+            print(f"Error exporting whitelist to CSV: {e}")
+            return False, None
+
+    def _get_from_cache(self, key: str):
+        """Get a value from cache if it exists and is not expired"""
+        if not self._cache_enabled:
+            return None
+            
+        if key not in self._cache:
+            return None
+            
+        # Check if cache entry has expired
+        if key in self._cache_ttl and self._cache_ttl[key] < datetime.datetime.now():
+            # Cache expired
+            del self._cache[key]
+            del self._cache_ttl[key]
+            return None
+            
+        return self._cache[key]
+        
+    def _set_cache(self, key: str, value, ttl_seconds: int = 60):
+        """Store a value in cache with expiration time"""
+        if not self._cache_enabled:
+            return
+            
+        self._cache[key] = value
+        self._cache_ttl[key] = datetime.datetime.now() + datetime.timedelta(seconds=ttl_seconds)
+        
+    def _clear_cache(self):
+        """Clear all cached values"""
+        self._cache = {}
+        self._cache_ttl = {}
+        
+    def _invalidate_cache_key(self, key: str):
+        """Remove a specific key from cache"""
+        if key in self._cache:
+            del self._cache[key]
+        if key in self._cache_ttl:
+            del self._cache_ttl[key] 

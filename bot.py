@@ -1,14 +1,19 @@
 import os
 import logging
 import asyncio
-from typing import Dict, List, Optional, Union, Any
+import time
+import json
+import sqlite3
 from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional, Union, Tuple, Set
 
+from dotenv import load_dotenv
 from telegram import (
-    Update, 
-    InlineKeyboardButton, 
-    InlineKeyboardMarkup, 
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     ReplyKeyboardMarkup,
+    KeyboardButton,
     BotCommand,
     BotCommandScopeChat
 )
@@ -19,162 +24,52 @@ from telegram.ext import (
     CallbackQueryHandler,
     ConversationHandler,
     ContextTypes,
-    filters
+    filters,
+    PicklePersistence,
+    CallbackContext
 )
 from telegram.error import (
-    TelegramError, 
-    Forbidden, 
-    BadRequest, 
-    TimedOut, 
-    NetworkError
+    TelegramError, Forbidden, BadRequest, NetworkError, TimedOut, ChatMigrated, RetryAfter
 )
+from telegram.constants import ChatType
+from telegram.helpers import escape_markdown
 
 from database import Database
 
-# Enable logging
+# Load environment variables
+load_dotenv()
+
+# Configure logging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.DEBUG
 )
 logger = logging.getLogger(__name__)
 
-# Database instance
-db = None
+# Initialize database
+db = Database()
 
-# Admin user IDs
-ADMIN_IDS = [5183585807]  # Замените на нужные ID администраторов
+# Admin IDs - replace with actual admin user IDs
+ADMIN_IDS = [6327617477]  # Add your admin Telegram user IDs here
 
-# Conversation states
+# States for conversation handlers
+BROADCAST_MESSAGE = 0
 AWAITING_CHECK_VALUE = 1
 AWAITING_ADD_VALUE = 2
-AWAITING_WL_TYPE = 3
-AWAITING_WL_REASON = 4
-AWAITING_REMOVE_VALUE = 5
-BROADCAST_MESSAGE = 6
+AWAITING_REMOVE_VALUE = 3
+AWAITING_WL_TYPE = 4
+AWAITING_WL_REASON = 5
 
-# Key for storing active bot message in context
-BOT_ACTIVE_MESSAGE_KEY = 'active_bot_message'
+# WL types and reasons
+WL_TYPES = ["GTD", "FCFS"]
+WL_REASONS = ["Fluffy holder", "X contributor"]
 
-# Retry settings for network operations
-MAX_RETRIES = 3
-RETRY_DELAY = 1  # seconds
+# Keys for storing the active message in user_data
+ACTIVE_MESSAGE_KEY = 'active_message'  # Store (chat_id, message_id) for active menu
 
-# Health monitoring
-LAST_ERROR_TIME = None
-ERROR_COUNT = 0
-ERROR_THRESHOLD = 5  # Number of errors before restarting bot
-ERROR_WINDOW = 60  # Time window in seconds for counting errors
+# Константа для хранения последнего сообщения бота
+BOT_ACTIVE_MESSAGE_KEY = 'active_bot_message'  # Ключ для хранения ID активного сообщения бота
 
-async def send_message_with_retry(bot, *args, **kwargs):
-    """Send a message with retry logic for network errors"""
-    for attempt in range(MAX_RETRIES):
-        try:
-            return await bot.send_message(*args, **kwargs)
-        except NetworkError as e:
-            if attempt < MAX_RETRIES - 1:
-                logger.warning(f"Network error when sending message, retrying ({attempt+1}/{MAX_RETRIES}): {e}")
-                await asyncio.sleep(RETRY_DELAY * (2 ** attempt))  # Exponential backoff
-            else:
-                logger.error(f"Failed to send message after {MAX_RETRIES} attempts: {e}")
-                raise
-        except Exception as e:
-            logger.error(f"Error sending message: {e}")
-            raise
-
-async def edit_message_with_retry(message, *args, **kwargs):
-    """Edit a message with retry logic for network errors"""
-    for attempt in range(MAX_RETRIES):
-        try:
-            return await message.edit_text(*args, **kwargs)
-        except NetworkError as e:
-            if attempt < MAX_RETRIES - 1:
-                logger.warning(f"Network error when editing message, retrying ({attempt+1}/{MAX_RETRIES}): {e}")
-                await asyncio.sleep(RETRY_DELAY * (2 ** attempt))  # Exponential backoff
-            else:
-                logger.error(f"Failed to edit message after {MAX_RETRIES} attempts: {e}")
-                raise
-        except BadRequest as e:
-            # Message is not modified, this is not a critical error
-            if "message is not modified" in str(e).lower():
-                logger.debug("Message content not changed, ignoring edit")
-                return message
-            else:
-                logger.error(f"Error editing message: {e}")
-                raise
-        except Exception as e:
-            logger.error(f"Error editing message: {e}")
-            raise
-
-def record_error():
-    """Record an error for health monitoring"""
-    global LAST_ERROR_TIME, ERROR_COUNT
-    now = datetime.now()
-    
-    # Reset error count if last error was too long ago
-    if LAST_ERROR_TIME and (now - LAST_ERROR_TIME).total_seconds() > ERROR_WINDOW:
-        ERROR_COUNT = 0
-    
-    ERROR_COUNT += 1
-    LAST_ERROR_TIME = now
-    
-    logger.warning(f"Error recorded: count={ERROR_COUNT}, threshold={ERROR_THRESHOLD}")
-    
-    # Check if we need to restart
-    if ERROR_COUNT >= ERROR_THRESHOLD:
-        logger.critical(f"Error threshold reached ({ERROR_COUNT}), bot needs restart")
-        return True
-    return False
-
-async def update_or_send_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
-                               text: str, reply_markup=None, parse_mode=None) -> None:
-    """Update existing message or send a new one with retry logic"""
-    try:
-        if update.callback_query:
-            return await edit_message_with_retry(
-                update.callback_query.message,
-                text=text,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode
-            )
-        else:
-            return await send_message_with_retry(
-                context.bot,
-                chat_id=update.effective_chat.id,
-                text=text,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode
-            )
-    except Exception as e:
-        logger.error(f"Error in update_or_send_message: {e}")
-        # Try a simple send message as fallback
-        try:
-            return await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="⚠️ Произошла ошибка при обновлении сообщения. Попробуйте еще раз."
-            )
-        except Exception as fallback_e:
-            logger.critical(f"Even fallback message failed: {fallback_e}")
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle errors in the dispatcher"""
-    try:
-        if update and isinstance(update, Update) and update.effective_message:
-            # Let the user know an error occurred
-            await update.effective_message.reply_text(
-                "⚠️ Произошла ошибка при обработке запроса. Пожалуйста, попробуйте еще раз."
-            )
-        
-        # Log the error
-        logger.error(f"Exception while handling an update: {context.error}")
-        
-        # Record for health monitoring
-        needs_restart = record_error()
-        if needs_restart:
-            # We can't restart from here, but we can log it
-            logger.critical("Bot needs to be restarted due to too many errors")
-    except Exception as e:
-        logger.critical(f"Error in error handler: {e}")
-
+# Define command handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for the /start command"""
     user = update.effective_user
@@ -737,7 +632,7 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if 'add_data' in context.user_data:
             del context.user_data['add_data']
             logger.debug("Данные add_data очищены из контекста пользователя после ошибки")
-        
+    
     return ConversationHandler.END
 
 async def show_remove_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1237,6 +1132,109 @@ async def delete_and_update_message(
 async def save_active_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message) -> None:
     """Save the active message ID for a user to enable in-place updates"""
     context.user_data[ACTIVE_MESSAGE_KEY] = (message.chat_id, message.message_id)
+
+# Add function to update or send message
+async def update_or_send_message(
+    update: Update, 
+    context: ContextTypes.DEFAULT_TYPE, 
+    text: str, 
+    reply_markup=None, 
+    parse_mode=None
+) -> None:
+    """Update existing message or send a new one for clean interface"""
+    # If this is a callback query, try to edit the message
+    if update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+            return
+        except Exception as e:
+            logger.debug(f"Could not edit callback query message: {e}")
+    
+    # If we have an active message ID for this chat, try to edit it
+    chat_id = chat_id_from_update(update)
+    if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
+        active_message_id = context.chat_data[BOT_ACTIVE_MESSAGE_KEY]
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=active_message_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+            return
+        except Exception as e:
+            logger.debug(f"Could not edit active message {active_message_id}: {e}")
+    
+    # If we couldn't edit, send a new message
+    if update.message:
+        message = await update.message.reply_text(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode
+        )
+    else:
+        message = await context.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode
+        )
+    
+    # Store the message ID as the active one for this chat
+    context.chat_data[BOT_ACTIVE_MESSAGE_KEY] = message.message_id
+
+async def clean_old_bot_messages(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clean up old bot messages to keep chat clean, except the active message"""
+    chat_id = chat_id_from_update(update)
+    
+    # If we have an active message, keep track of it
+    active_message_id = None
+    if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
+        active_message_id = context.chat_data[BOT_ACTIVE_MESSAGE_KEY]
+    
+    # Try to get recent messages to delete old ones
+    try:
+        # We can only delete recent messages that the bot sent
+        # We'll use getUpdates with a limit to avoid excessive API calls
+        # This is an approximation as getUpdates has limitations
+        recent_updates = await context.bot.get_updates(limit=10, timeout=0)
+        
+        # Find messages from this bot in this chat
+        bot_id = context.bot.id
+        for bot_update in recent_updates:
+            if (bot_update.message and 
+                bot_update.message.from_user and 
+                bot_update.message.from_user.id == bot_id and
+                bot_update.message.chat_id == chat_id and
+                (active_message_id is None or bot_update.message.message_id != active_message_id)):
+                
+                # Try to delete this old message
+                try:
+                    await context.bot.delete_message(
+                        chat_id=chat_id,
+                        message_id=bot_update.message.message_id
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not delete old bot message: {e}")
+    except Exception as e:
+        logger.debug(f"Error getting updates to clean messages: {e}")
+
+def chat_id_from_update(update: Update) -> int:
+    """Extract chat ID from an update object"""
+    if update.effective_chat:
+        return update.effective_chat.id
+    elif update.callback_query and update.callback_query.message:
+        return update.callback_query.message.chat_id
+    elif update.message:
+        return update.message.chat_id
+    else:
+        # Fallback - should not happen in normal operation
+        return 0
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for processing all non-command messages"""
@@ -1921,14 +1919,11 @@ def main() -> None:
         logger.error(f"Error initializing database: {e}")
         return
     
-    # Create the Application with proper defaults for better stability
+    # Create the Application
     application = Application.builder().token(token).build()
     
     # Setup bot commands and description on startup
     application.post_init = setup_commands
-    
-    # Set up error handler
-    application.add_error_handler(error_handler)
     
     # Command handlers
     application.add_handler(CommandHandler("start", start))
@@ -2009,19 +2004,143 @@ def main() -> None:
     # Add handler for document uploads (for import)
     application.add_handler(MessageHandler(filters.Document.ALL, handle_import_file))
     
-    # Add callback query handler 
+    # Add callback query handler
     application.add_handler(CallbackQueryHandler(button_callback))
     
     # Add message handler to catch all unhandled messages
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # Start the Bot with error handling
+    # Регистрируем обработчик ошибок
+    application.add_error_handler(error_handler)
+    
+    # Добавляем регулярную проверку работоспособности бота
+    job_queue = application.job_queue
+    # Проверка каждый час
+    job_queue.run_repeating(health_check, interval=3600, first=300)
+    # Очистка кэша каждые 12 часов
+    job_queue.run_repeating(
+        lambda context: db._clear_cache() if db and hasattr(db, '_clear_cache') else None, 
+        interval=43200, 
+        first=600
+    )
+    
+    # Start the Bot
     logger.info("Starting the bot...")
     try:
-        application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
     except Exception as e:
-        logger.critical(f"Error starting bot: {e}")
-        # If needed, implement restart logic here
+        logger.critical(f"Bot crashed: {e}", exc_info=True)
+        # Можно добавить код для уведомления администраторов
+    finally:
+        logger.info("Bot stopped")
+
+# Функция для обработки критических ошибок
+def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Логирует ошибки и отправляет сообщение администратору при критических сбоях"""
+    error = context.error
+    
+    # Сначала логируем ошибку
+    logger.error(f"Exception while handling an update: {error}", exc_info=context.error)
+    
+    # Обрабатываем разные типы ошибок
+    if isinstance(error, TimedOut):
+        logger.warning(f"Telegram server timed out: {error}")
+        # Тайм-ауты обычно временные, просто логируем
+    elif isinstance(error, NetworkError):
+        logger.warning(f"Network error: {error}")
+        # Ошибки сети обычно временные, просто логируем
+    elif isinstance(error, ChatMigrated):
+        logger.info(f"Chat migrated to chat_id: {error.new_chat_id}")
+        # Можно обновить ID чата в базе данных
+    elif isinstance(error, RetryAfter):
+        logger.warning(f"Rate limit exceeded. Retry after {error.retry_after} seconds")
+        # Здесь можно добавить задержку для избежания блокировки
+    elif isinstance(error, BadRequest):
+        logger.warning(f"Bad request: {error}")
+    elif isinstance(error, Forbidden):
+        logger.warning(f"Forbidden action: {error}")
+    elif isinstance(error, (sqlite3.Error, sqlite3.Warning, sqlite3.OperationalError)):
+        logger.error(f"Database error: {error}")
+        # Для ошибок базы данных можно добавить попытку восстановления
+        try:
+            global db
+            logger.info("Attempting to reconnect to database...")
+            db = Database()
+            logger.info("Database reconnected successfully")
+        except Exception as e:
+            logger.error(f"Failed to reconnect to database: {e}")
+    else:
+        # Для других критических ошибок отправляем сообщение администратору
+        try:
+            error_message = f"❌ *Критическая ошибка*\n\n`{type(error).__name__}: {error}`"
+            
+            # Получаем информацию об апдейте
+            update_info = ""
+            if update and isinstance(update, Update):
+                if update.effective_chat:
+                    update_info += f"\nChat ID: {update.effective_chat.id}"
+                if update.effective_user:
+                    update_info += f"\nUser: {update.effective_user.first_name} (ID: {update.effective_user.id})"
+                if update.effective_message:
+                    update_info += f"\nMessage: {update.effective_message.text[:50]}"
+            
+            # Отправляем сообщение администратору с трейсбэком
+            for admin_id in ADMIN_IDS:
+                try:
+                    context.application.bot.send_message(
+                        chat_id=admin_id,
+                        text=error_message + (f"\n\n*Update Info:*\n`{update_info}`" if update_info else ""),
+                        parse_mode='Markdown'
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send error message to admin {admin_id}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Failed to handle error notification: {e}")
+
+# Функция для проверки работоспособности бота
+def health_check(context: CallbackContext) -> None:
+    """Регулярно проверяет работоспособность бота и базы данных"""
+    logger.info("Performing health check...")
+    
+    try:
+        # Проверяем подключение к базе данных
+        global db
+        if db is None:
+            logger.error("Database is not initialized")
+            db = Database()
+            logger.info("Database reinitialized")
+        else:
+            # Простой запрос для проверки работоспособности БД
+            try:
+                count = db.get_total_users()
+                logger.info(f"Database health check passed. Total users: {count}")
+            except Exception as e:
+                logger.error(f"Database health check failed: {e}")
+                db = Database()
+                logger.info("Database reinitialized after failure")
+        
+        # Проверка целостности кэша
+        if hasattr(db, '_cache'):
+            # Очищаем устаревшие записи кэша
+            current_time = datetime.now()
+            expired_keys = [key for key, expiry in db._cache_ttl.items() if expiry < current_time]
+            for key in expired_keys:
+                db._invalidate_cache_key(key)
+            logger.info(f"Cache cleanup performed. Removed {len(expired_keys)} expired entries")
+            
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        # Отправляем уведомление администраторам
+        for admin_id in ADMIN_IDS:
+            try:
+                context.bot.send_message(
+                    chat_id=admin_id,
+                    text=f"⚠️ *Предупреждение*\n\nПроверка работоспособности не удалась: `{str(e)}`",
+                    parse_mode='Markdown'
+                )
+            except Exception as ex:
+                logger.error(f"Failed to send health check failure notification: {ex}")
 
 if __name__ == "__main__":
     main() 
