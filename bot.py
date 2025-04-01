@@ -248,19 +248,19 @@ async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     logger.debug(f"Проверка значения в базе данных: '{value}' от пользователя {user.id}")
     
     try:
-        # Check the value against whitelist
-        result = db.check_whitelist(value)
-        
+    # Check the value against whitelist
+    result = db.check_whitelist(value)
+    
         # Log the check event
         db.log_event("check_whitelist", update.effective_user.id, {"value": value}, bool(result.get("found", False)))
         
         # Create reply markup with buttons for next actions
-        keyboard = [
-            [InlineKeyboardButton("🔄 Проверить другое значение", callback_data="action_check")],
-            [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
+    keyboard = [
+        [InlineKeyboardButton("🔄 Проверить другое значение", callback_data="action_check")],
+        [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
         # Prepare response message
         if result.get("found", False):
             message_text = (
@@ -279,17 +279,17 @@ async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Try to delete the user's message for cleaner interface
         try:
             await update.message.delete()
-        except Exception as e:
+    except Exception as e:
             logger.warning(f"Не удалось удалить сообщение пользователя: {e}")
         
         # Send a new message with the result
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=message_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-        
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+    
     except Exception as e:
         logger.error(f"Ошибка при проверке значения в базе данных: {e}")
         await update.message.reply_text(
@@ -388,8 +388,8 @@ async def show_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     last_week_checks = db.get_checks_count(days=7)
     
     # Format message
-    stats_text = (
-        "*📊 Статистика бота*\n\n"
+        stats_text = (
+            "*📊 Статистика бота*\n\n"
         f"*Пользователи:*\n"
         f"Всего пользователей: {total_users}\n"
         f"Активных за 7 дней: {active_users}\n\n"
@@ -416,10 +416,10 @@ async def show_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
     else:
         await update.message.reply_text(
-            stats_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
+        stats_text,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
 
 async def show_add_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show menu for adding a value to whitelist"""
@@ -583,16 +583,16 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         # Добавляем запись в вайтлист
         success = db.add_to_whitelist(value, wl_type, selected_reason)
-        
-        # Log event
+    
+    # Log event
         db.log_event("add_whitelist", update.effective_user.id, {
             "value": value, 
             "wl_type": wl_type, 
             "wl_reason": selected_reason
         }, success)
-        
-        # Create response message
-        if success:
+    
+    # Create response message
+    if success:
             logger.debug(f"Значение '{value}' успешно добавлено в базу данных")
             message_text = (
                 f"✅ Запись успешно добавлена в вайтлист!\n\n"
@@ -600,18 +600,18 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 f"*Тип WL:* {wl_type}\n"
                 f"*Причина:* {selected_reason}"
             )
-        else:
+    else:
             logger.debug(f"Значение '{value}' уже существует в базе данных")
-            message_text = f"⚠️ Значение \"{value}\" уже существует в вайтлисте."
-        
-        # Buttons for next action
-        keyboard = [
-            [InlineKeyboardButton("➕ Добавить еще", callback_data="admin_add")],
-            [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
-            [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
+        message_text = f"⚠️ Значение \"{value}\" уже существует в вайтлисте."
+    
+    # Buttons for next action
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить еще", callback_data="admin_add")],
+        [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
         # Send the response
         await query.edit_message_text(
             message_text,
@@ -637,16 +637,16 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(
-            message_text,
-            reply_markup=reply_markup
-        )
-        
+        message_text,
+        reply_markup=reply_markup
+    )
+    
         # Очищаем данные о добавлении
         if 'add_data' in context.user_data:
             del context.user_data['add_data']
             logger.debug("Данные add_data очищены из контекста пользователя после ошибки")
         
-        return ConversationHandler.END
+    return ConversationHandler.END
 
 async def show_remove_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show menu for removing a value from whitelist"""
@@ -1305,50 +1305,50 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.debug(f"Обработка обычного сообщения как проверки в базе данных: '{text}'")
         
         try:
-            # Check the value against whitelist
-            value = text
-            result = db.check_whitelist(value)
+        # Check the value against whitelist
+        value = text
+        result = db.check_whitelist(value)
             user = update.effective_user
-            
-            # Create beautiful response
+        
+        # Create beautiful response
             if result.get("found", False):
-                message_text = (
-                    f"*✅ Результат проверки*\n\n"
+            message_text = (
+                f"*✅ Результат проверки*\n\n"
                     f"Привет, {user.first_name}! 👋\n\n"
                     f"Значение `{value}` *найдено* в базе данных!\n\n"
                     f"У вас {result.get('wl_type', 'Не указан')} WL потому что вы {result.get('wl_reason', 'Не указана')}! 🎉"
-                )
-            else:
-                message_text = (
-                    f"*❌ Результат проверки*\n\n"
+            )
+        else:
+            message_text = (
+                f"*❌ Результат проверки*\n\n"
                     f"Нам жаль, {user.first_name}, но введенного значения пока нет в BuddyWL.\n\n"
                     f"Мы с нетерпением ждем твой вклад и надеемся скоро увидеть тебя уже вместе с твоим Buddy! 💫"
-                )
-            
-            # Buttons for next action
-            keyboard = [
+            )
+        
+        # Buttons for next action
+        keyboard = [
                 [InlineKeyboardButton("🔄 Проверить другое значение", callback_data="action_check")],
-                [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            # Try to delete the user message for cleaner interface
-            try:
-                await context.bot.delete_message(
-                    chat_id=update.message.chat_id,
-                    message_id=update.message.message_id
-                )
-            except Exception as e:
-                logger.debug(f"Could not delete user message: {e}")
-            
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Try to delete the user message for cleaner interface
+        try:
+            await context.bot.delete_message(
+                chat_id=update.message.chat_id,
+                message_id=update.message.message_id
+            )
+        except Exception as e:
+            logger.debug(f"Could not delete user message: {e}")
+        
             # Всегда отправляем новое сообщение с результатом
             chat_id = update.effective_chat.id
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=message_text,
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
-            )
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
             
         except Exception as e:
             logger.error(f"Ошибка при проверке значения в базе данных: {e}")
