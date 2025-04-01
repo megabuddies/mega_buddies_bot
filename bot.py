@@ -52,6 +52,7 @@ AWAITING_ADD_VALUE = 2
 AWAITING_REMOVE_VALUE = 3
 AWAITING_WL_TYPE = 4
 AWAITING_WL_REASON = 5
+AWAITING_IMPORT_FILE = 10  # Use a unique number
 
 # WL types and reasons
 WL_TYPES = ["GTD", "FCFS"]
@@ -62,13 +63,6 @@ ACTIVE_MESSAGE_KEY = 'active_message'  # Store (chat_id, message_id) for active 
 
 # Константа для хранения последнего сообщения бота
 BOT_ACTIVE_MESSAGE_KEY = 'active_bot_message'  # Ключ для хранения ID активного сообщения бота
-
-# Define conversation states for import
-AWAITING_IMPORT_FILE, AWAITING_IMPORT_MODE = range(1000, 1002)  # Используем диапазон, не пересекающийся с другими
-
-# Import mode choices
-IMPORT_MODE_APPEND = "append"
-IMPORT_MODE_REPLACE = "replace"
 
 # Define command handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -179,7 +173,7 @@ async def show_help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "• `/broadcast` - Отправить сообщение пользователям\n"
             "• `/stats` - Показать статистику бота\n"
             "• `/export` - Экспортировать базу данных в CSV формат\n"
-            "• `/import` - Импортировать данные в вайтлист\n\n"
+            "• `/import` - Импортировать данные из CSV файла\n\n"
         )
     
     # Add back button
@@ -320,11 +314,11 @@ async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")
         ],
         [
-            InlineKeyboardButton("📨 Рассылка сообщений", callback_data="admin_broadcast"),
-            InlineKeyboardButton("📤 Экспорт данных", callback_data="admin_export")
+            InlineKeyboardButton("📨 Рассылка", callback_data="admin_broadcast"),
+            InlineKeyboardButton("📤 Экспорт", callback_data="admin_export")
         ],
         [
-            InlineKeyboardButton("📥 Импорт данных", callback_data="admin_import")
+            InlineKeyboardButton("📥 Импорт", callback_data="admin_import")
         ],
         [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
     ]
@@ -340,7 +334,7 @@ async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "• *Статистика* - просмотр статистики использования\n"
         "• *Рассылка* - отправка сообщений пользователям\n"
         "• *Экспорт* - выгрузка базы данных в CSV\n"
-        "• *Импорт* - загрузка данных из CSV файла\n"
+        "• *Импорт* - загрузка данных из CSV\n"
     )
     
     await update_or_send_message(
@@ -1399,17 +1393,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif callback_data == "admin_export":
         await handle_export_button(update, context)
     elif callback_data == "admin_import":
-        await show_import_menu(update, context)
+        await handle_admin_import(update, context)
     # Import actions
-    elif callback_data == "start_import":
-        await import_command(update, context)
-    elif callback_data == "get_csv_template":
-        await get_csv_template(update, context)
-    elif callback_data == "import_cancel":
-        # Handle cancel in the callback handler directly
-        if 'import_file' in context.user_data:
-            del context.user_data['import_file']
-        await show_admin_menu(update, context)
+    elif callback_data == "import_add" or callback_data == "import_replace":
+        await handle_import_mode_selection(update, context)
+    elif callback_data == "cancel_import":
+        await cancel_import(update, context)
     # Whitelist pagination
     elif callback_data == "whitelist_next" or callback_data == "whitelist_prev":
         await handle_whitelist_pagination(update, context)
@@ -1447,10 +1436,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif callback_data.startswith("wl_reason_"):
         # Handle whitelist reason selection for adding new values
         await handle_wl_reason(update, context)
-    elif callback_data.startswith("import_mode_"):
-        # Handle import mode selection - для правильной маршрутизации в ConversationHandler
-        # Обработка будет выполнена в handle_import_mode
-        pass
     else:
         logger.warning(f"Unhandled callback data: {callback_data}")
         # For safety, redirect to main menu when an unknown callback is received
@@ -1520,7 +1505,7 @@ async def setup_commands(application: Application) -> None:
         BotCommand("broadcast", "Отправить сообщение всем пользователям"),
         BotCommand("stats", "Показать статистику использования бота"),
         BotCommand("export", "Экспортировать базу данных в CSV формат"),
-        BotCommand("import", "Импортировать данные в вайтлист")
+        BotCommand("import", "Импортировать данные из CSV файла")
     ]
     
     # Set commands for all users
@@ -1648,324 +1633,237 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.error(f"Error exporting data: {e}")
         await progress_message.edit_text(f"❌ Ошибка при экспорте данных: {str(e)}")
 
-async def import_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handler for the /import command - starts the import process"""
+async def import_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler for the /import command - imports whitelist from CSV"""
     user = update.effective_user
     
     # Only admins can import data
     if user.id not in ADMIN_IDS:
         await update.message.reply_text("⛔ У вас нет прав для импорта данных.")
-        return ConversationHandler.END
+        return
     
-    # Start import conversation
-    await update.message.reply_text(
-        "📥 *Импорт данных в вайтлист*\n\n"
-        "Отправьте CSV файл с данными для импорта. Файл должен содержать как минимум столбец `value`.\n\n"
-        "Рекомендуемый формат CSV: `id,value,wl_type,wl_reason`\n\n"
-        "Для отмены импорта, отправьте /cancel",
-        parse_mode='Markdown'
+    # Show import menu
+    await show_import_menu(update, context)
+
+async def show_import_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show the import options menu"""
+    user = update.effective_user
+    
+    # Only admins can import data
+    if user.id not in ADMIN_IDS:
+        if update.callback_query:
+            await update.callback_query.answer("У вас нет прав для импорта данных.")
+            return
+        else:
+            await update.message.reply_text("⛔ У вас нет прав для импорта данных.")
+            return
+    
+    # Create menu with import options
+    message_text = (
+        "*📥 Импорт данных в вайтлист*\n\n"
+        "Выберите режим импорта:\n\n"
+        "• *Добавить записи* - добавит новые записи из CSV файла, сохраняя существующие\n"
+        "• *Заменить все* - удалит все существующие записи и импортирует новые из CSV\n\n"
+        "📋 *Формат CSV файла:*\n"
+        "- Первая колонка: значение (обязательно)\n"
+        "- Вторая колонка: тип WL (опционально)\n"
+        "- Третья колонка: причина WL (опционально)\n\n"
+        "_После выбора режима отправьте CSV файл как документ._"
     )
     
+    # Create keyboard with options
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить записи", callback_data="import_add")],
+        [InlineKeyboardButton("🔄 Заменить все", callback_data="import_replace")],
+        [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Update or send message
+    await update_or_send_message(
+        update,
+        context,
+        message_text,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def handle_import_mode_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle import mode selection (add or replace)"""
+    query = update.callback_query
+    callback_data = query.data
+    
+    # Parse import mode from callback data
+    replace_existing = callback_data == "import_replace"
+    
+    # Store the mode in user_data
+    context.user_data['import_mode'] = {
+        'replace_existing': replace_existing,
+        'waiting_for_file': True
+    }
+    
+    # Send instructions to user
+    mode_text = "замену всех существующих записей" if replace_existing else "добавление новых записей"
+    
+    await query.edit_message_text(
+        f"*📥 Импорт данных в вайтлист*\n\n"
+        f"Выбран режим: *{mode_text}*\n\n"
+        f"Пожалуйста, отправьте CSV файл как документ.\n\n"
+        f"📋 *Формат CSV файла:*\n"
+        f"- Первая колонка: значение (обязательно)\n"
+        f"- Вторая колонка: тип WL (опционально)\n"
+        f"- Третья колонка: причина WL (опционально)",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Отменить импорт", callback_data="cancel_import")]
+        ])
+    )
+    
+    # Wait for file
     return AWAITING_IMPORT_FILE
 
 async def handle_import_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle receiving a CSV file for import"""
-    # Check if user cancelled
-    if update.message.text and update.message.text.startswith('/cancel'):
-        await update.message.reply_text("❌ Импорт отменен.")
+    """Process the uploaded CSV file for import"""
+    user = update.effective_user
+    
+    # Check if we're waiting for import file
+    if not context.user_data.get('import_mode', {}).get('waiting_for_file', False):
         return ConversationHandler.END
     
-    # Check if we received a document/file
-    if update.message.document:
-        file = update.message.document
-        # Check file extension
-        if file.file_name.lower().endswith('.csv'):
-            # Save file info in context
-            context.user_data['import_file'] = file
-            
-            # Create buttons for mode selection
-            keyboard = [
-                [
-                    InlineKeyboardButton("➕ Добавить к существующим", callback_data=f"import_mode_{IMPORT_MODE_APPEND}"),
-                ],
-                [
-                    InlineKeyboardButton("🔄 Заменить все данные", callback_data=f"import_mode_{IMPORT_MODE_REPLACE}"),
-                ],
-                [
-                    InlineKeyboardButton("❌ Отменить импорт", callback_data="import_cancel"),
-                ]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            # Ask for import mode
-            await update.message.reply_text(
-                "📥 *Выберите режим импорта*\n\n"
-                "• *Добавить к существующим* - добавит новые записи, игнорируя дубликаты\n"
-                "• *Заменить все данные* - удалит текущую базу и загрузит новые данные\n\n"
-                "⚠️ *Внимание!* Замена данных не может быть отменена!",
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
-            )
-            
-            return AWAITING_IMPORT_MODE
-        else:
-            # Not a CSV file
-            await update.message.reply_text(
-                "❌ Файл должен быть в формате CSV.\n\n"
-                "Попробуйте снова или отправьте /cancel для отмены."
-            )
-            return AWAITING_IMPORT_FILE
-    else:
-        # Not a file at all
+    # Check if a file was actually sent
+    if not update.message.document:
         await update.message.reply_text(
-            "❌ Нужно отправить CSV файл.\n\n"
-            "Попробуйте снова или отправьте /cancel для отмены."
+            "❌ Пожалуйста, отправьте CSV файл как документ."
         )
         return AWAITING_IMPORT_FILE
-
-async def handle_import_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle import mode selection"""
-    query = update.callback_query
-    await query.answer()
     
-    callback_data = query.data
+    # Check file extension
+    file = update.message.document
+    if not file.file_name.lower().endswith('.csv'):
+        await update.message.reply_text(
+            "❌ Пожалуйста, отправьте файл в формате CSV."
+        )
+        return AWAITING_IMPORT_FILE
     
-    # Cancel import
-    if callback_data == "import_cancel":
-        await query.edit_message_text("❌ Импорт отменен.")
-        if 'import_file' in context.user_data:
-            del context.user_data['import_file']
-        return ConversationHandler.END
-    
-    # Get selected mode
-    mode = callback_data.replace("import_mode_", "")
-    if mode not in [IMPORT_MODE_APPEND, IMPORT_MODE_REPLACE]:
-        await query.edit_message_text("❌ Неверный режим импорта. Импорт отменен.")
-        return ConversationHandler.END
-    
-    # Save mode in context
-    context.user_data['import_mode'] = mode
-    
-    # Show progress message
-    progress_message = await query.edit_message_text(
-        f"🔄 Загрузка и обработка файла...\n\n"
-        f"Режим импорта: {'Добавление' if mode == IMPORT_MODE_APPEND else 'Замена'}\n\n"
-        f"Пожалуйста, подождите. Импорт больших файлов может занять некоторое время."
+    # Send progress message
+    progress_message = await update.message.reply_text(
+        "🔄 Загрузка файла и обработка данных...",
+        reply_markup=None
     )
     
     try:
-        # Get file from Telegram
-        file = context.user_data['import_file']
-        tg_file = await context.bot.get_file(file.file_id)
-        
-        # Create a temporary file name
-        import tempfile
-        import os
-        temp_dir = tempfile.gettempdir()
-        temp_file = os.path.join(temp_dir, f"import_{file.file_name}")
+        # Get import mode
+        replace_existing = context.user_data['import_mode'].get('replace_existing', False)
         
         # Download the file
-        await tg_file.download_to_drive(temp_file)
+        new_file = await context.bot.get_file(file.file_id)
+        file_path = f"import_{user.id}_{file.file_name}"
+        await new_file.download_to_drive(file_path)
         
-        # Import the data
-        success, stats = db.import_whitelist_from_csv(temp_file, mode)
+        # Update progress
+        await progress_message.edit_text("🔄 Файл загружен. Импортирую данные...")
         
-        # Remove the temporary file
+        # Import from CSV
+        success, stats = db.import_whitelist_from_csv(file_path, replace_existing)
+        
+        # Clean up temp file
+        import os
         try:
-            os.remove(temp_file)
-        except:
-            pass
+            os.remove(file_path)
+        except Exception as e:
+            logger.warning(f"Could not remove temp file {file_path}: {e}")
         
-        # Process the result
+        # Log the event
+        db.log_event("import_data", user.id, {
+            "filename": file.file_name,
+            "replace_existing": replace_existing,
+            "stats": stats
+        }, success)
+        
+        # Create result message
         if success:
-            # Format stats
-            stats_text = (
-                f"📊 *Результаты импорта:*\n\n"
-                f"✅ *Добавлено:* {stats.get('added', 0)}\n"
-                f"⏭️ *Пропущено:* {stats.get('skipped', 0)}\n"
-                f"❌ *Ошибки:* {stats.get('errors', 0)}\n"
-                f"📋 *Всего строк:* {stats.get('total', 0)}\n\n"
+            total = stats.get('total_processed', 0)
+            added = stats.get('added', 0)
+            skipped = stats.get('skipped', 0)
+            errors = stats.get('errors', 0)
+            
+            result_text = (
+                f"✅ *Импорт успешно завершен*\n\n"
+                f"📊 *Статистика импорта:*\n"
+                f"• Всего обработано строк: {total}\n"
+                f"• Добавлено записей: {added}\n"
+                f"• Пропущено дубликатов: {skipped}\n"
+                f"• Ошибок: {errors}\n\n"
             )
             
-            if mode == IMPORT_MODE_REPLACE:
-                stats_text += "🔄 *Режим:* Полная замена данных\n\n"
-            else:
-                stats_text += "➕ *Режим:* Добавление к существующим данным\n\n"
+            # Add error details if any
+            error_details = stats.get('error_details', [])
+            if errors > 0 and error_details:
+                # Limit to first 5 errors to avoid message too long
+                shown_errors = error_details[:5]
+                result_text += (
+                    f"❗ *Детали ошибок:*\n"
+                    f"{chr(10).join(['• ' + err for err in shown_errors])}\n"
+                )
+                if len(error_details) > 5:
+                    result_text += f"_...и еще {len(error_details) - 5} ошибок_\n\n"
             
-            stats_text += "Операция завершена успешно!"
-            
-            # Log the event
-            db.log_event("import_data", update.effective_user.id, {
-                "mode": mode,
-                "filename": file.file_name,
-                "stats": stats
-            }, True)
-            
-            # Create return to admin panel button
-            keyboard = [[InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
+            # Send result
+            keyboard = [
+                [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
+            ]
             await progress_message.edit_text(
-                stats_text,
-                reply_markup=reply_markup,
+                result_text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode='Markdown'
             )
         else:
-            # Handle error
-            error_message = (
-                f"❌ *Ошибка при импорте данных:*\n\n"
-                f"{stats.get('error', 'Неизвестная ошибка')}\n\n"
-                f"Пожалуйста, проверьте формат файла и попробуйте снова."
-            )
-            
-            # Log the event
-            db.log_event("import_data", update.effective_user.id, {
-                "mode": mode,
-                "filename": file.file_name,
-                "error": stats.get('error', 'Unknown error')
-            }, False)
-            
-            # Create return to admin panel button
-            keyboard = [[InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
+            # Show error
             await progress_message.edit_text(
-                error_message,
-                reply_markup=reply_markup,
+                f"❌ *Ошибка при импорте данных*\n\n"
+                f"Детали: {stats.get('error_details', ['Неизвестная ошибка'])[0]}",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
+                ]),
                 parse_mode='Markdown'
             )
+    
     except Exception as e:
         logger.error(f"Error during import: {e}")
-        
-        # Log the event
-        db.log_event("import_data", update.effective_user.id, {
-            "mode": context.user_data.get('import_mode', 'unknown'),
-            "filename": file.file_name if 'import_file' in context.user_data else 'unknown',
-            "error": str(e)
-        }, False)
-        
-        # Create return to admin panel button
-        keyboard = [[InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
         await progress_message.edit_text(
-            f"❌ *Произошла ошибка при импорте:*\n\n{str(e)}\n\n"
-            f"Пожалуйста, проверьте формат файла и попробуйте снова.",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
+            f"❌ Произошла ошибка при импорте: {str(e)}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
+            ])
         )
     
-    # Clean up context
-    if 'import_file' in context.user_data:
-        del context.user_data['import_file']
+    # Clear import mode
     if 'import_mode' in context.user_data:
         del context.user_data['import_mode']
     
     return ConversationHandler.END
 
-async def show_import_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show the import menu from button click"""
-    user = update.effective_user
+async def cancel_import(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancel the import process"""
+    query = update.callback_query
     
-    # Only admins can import data
-    if user.id not in ADMIN_IDS:
-        await update.callback_query.answer("У вас нет прав для импорта данных.")
-        return
+    # Clear import mode
+    if 'import_mode' in context.user_data:
+        del context.user_data['import_mode']
     
-    # Show import options
-    keyboard = [
-        [InlineKeyboardButton("📄 Загрузить CSV файл", callback_data="start_import")],
-        [InlineKeyboardButton("❓ Шаблон CSV файла", callback_data="get_csv_template")],
-        [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.callback_query.edit_message_text(
-        "📥 *Импорт данных в вайтлист*\n\n"
-        "Выберите действие:\n\n"
-        "• *Загрузить CSV файл* - начать процесс импорта\n"
-        "• *Шаблон CSV файла* - получить пример CSV файла\n\n"
-        "Для импорта необходим файл CSV с минимальным набором столбцов: `value`.\n"
-        "Рекомендуемые столбцы: `id,value,wl_type,wl_reason`",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
+    await query.edit_message_text(
+        "❌ Импорт отменен.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
+        ])
     )
+    
+    return ConversationHandler.END
 
-async def get_csv_template(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send a CSV template file for import"""
-    user = update.effective_user
-    
-    # Only admins can get template
-    if user.id not in ADMIN_IDS:
-        await update.callback_query.answer("У вас нет прав для получения шаблона.")
-        return
-    
-    await update.callback_query.answer("Создаю шаблон CSV файла...")
-    
-    try:
-        # Create a template file
-        import csv
-        import tempfile
-        import os
-        
-        # Create a temporary file
-        temp_dir = tempfile.gettempdir()
-        template_file = os.path.join(temp_dir, "whitelist_template.csv")
-        
-        # Write template data
-        with open(template_file, 'w', newline='', encoding='utf-8') as csvfile:
-            fieldnames = ['id', 'value', 'wl_type', 'wl_reason']
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            
-            writer.writeheader()
-            # Add example rows
-            writer.writerow({
-                'id': '1',
-                'value': '0x1234567890abcdef1234567890abcdef12345678',
-                'wl_type': 'FCFS',
-                'wl_reason': 'Fluffy holder'
-            })
-            writer.writerow({
-                'id': '2',
-                'value': '0xabcdef1234567890abcdef1234567890abcdef12',
-                'wl_type': 'Guaranteed',
-                'wl_reason': 'Team member'
-            })
-        
-        # Send the template file
-        with open(template_file, 'rb') as file:
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=file,
-                filename="whitelist_template.csv",
-                caption="📋 *Шаблон CSV файла для импорта*\n\n"
-                        "Вы можете использовать этот шаблон для создания своего файла импорта. "
-                        "Минимально необходимый столбец - `value`.",
-                parse_mode='Markdown'
-            )
-        
-        # Remove the temporary file
-        try:
-            os.remove(template_file)
-        except:
-            pass
-        
-        # Return to import menu
-        await show_import_menu(update, context)
-        
-    except Exception as e:
-        logger.error(f"Error creating CSV template: {e}")
-        
-        # Show error
-        keyboard = [[InlineKeyboardButton("◀️ Назад к меню импорта", callback_data="admin_import")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.callback_query.edit_message_text(
-            f"❌ *Ошибка при создании шаблона:*\n\n{str(e)}\n\n"
-            f"Пожалуйста, попробуйте снова позже.",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
+async def handle_admin_import(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle import button click in admin menu"""
+    await show_import_menu(update, context)
 
 def main() -> None:
     """Start the bot"""
@@ -1999,6 +1897,31 @@ def main() -> None:
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     application.add_handler(CommandHandler("admin", show_admin_menu))
     application.add_handler(CommandHandler("export", export_command))
+    application.add_handler(CommandHandler("import", import_command))
+    
+    # Add conversation states for import
+    AWAITING_IMPORT_FILE = 10  # Use a unique number
+
+    # Add conversation handler for importing
+    import_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("import", import_command),
+            CallbackQueryHandler(handle_import_mode_selection, pattern="^import_(add|replace)$")
+        ],
+        states={
+            AWAITING_IMPORT_FILE: [
+                MessageHandler(filters.Document.ALL, handle_import_file),
+                CallbackQueryHandler(cancel_import, pattern="^cancel_import$")
+            ]
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel_import),
+            CallbackQueryHandler(cancel_import, pattern="^cancel_import$")
+        ],
+        name="import_conversation",
+        persistent=False
+    )
+    application.add_handler(import_handler)
     
     # Add conversation handler for check
     check_conv_handler = ConversationHandler(
@@ -2062,24 +1985,7 @@ def main() -> None:
     )
     application.add_handler(broadcast_conv_handler)
     
-    # Add conversation handler for import
-    import_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("import", import_command)],
-        states={
-            AWAITING_IMPORT_FILE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_import_file)],
-            AWAITING_IMPORT_MODE: [CallbackQueryHandler(handle_import_mode, pattern="^import_mode_")],
-        },
-        fallbacks=[
-            CallbackQueryHandler(button_callback, pattern="^import_cancel$"),
-            MessageHandler(filters.COMMAND, button_callback)
-        ],
-        name="import_conversation",
-        persistent=False,
-        per_chat=True
-    )
-    application.add_handler(import_conv_handler)
-    
-    # Add callback query handler - перемещено после ConversationHandler, но перед MessageHandler
+    # Add callback query handler - после ConversationHandler, но перед MessageHandler
     application.add_handler(CallbackQueryHandler(button_callback))
     
     # Add message handler - последним, чтобы перехватывать только те сообщения, которые не обработаны другими обработчиками
