@@ -21,9 +21,20 @@ def format_file(filename):
             import autopep8
         
         print(f"Formatting {filename}...")
-        # Use autopep8 to format the file
+        # Use autopep8 to format the file with more aggressive options
         result = subprocess.run(
-            [sys.executable, "-m", "autopep8", "--in-place", "--aggressive", "--aggressive", filename],
+            [
+                sys.executable, 
+                "-m", 
+                "autopep8", 
+                "--in-place", 
+                "--aggressive", 
+                "--aggressive", 
+                "--aggressive", 
+                "--select=E1,E2,E3,E4,E5,E7",
+                "--max-line-length=79",
+                filename
+            ],
             capture_output=True,
             text=True
         )
