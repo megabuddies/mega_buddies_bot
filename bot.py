@@ -19,16 +19,15 @@ from telegram import (
     BotCommandScopeChat
 )
 from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
+    Application, 
+    CommandHandler, 
+    MessageHandler, 
     CallbackQueryHandler,
     ConversationHandler,
     ContextTypes,
     filters,
     PicklePersistence,
-    Defaults,
-    AIORateLimiter
+    Defaults
 )
 
 from database import Database
@@ -95,7 +94,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for the /start command"""
     user = update.effective_user
     chat_id = update.effective_chat.id
-
+    
     # Add user to the database
     db.add_user(
         user_id=user.id,
@@ -104,13 +103,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         last_name=user.last_name,
         chat_id=chat_id
     )
-
+    
     # Log the event
     db.log_event("start", user.id)
-
+    
     # Show main menu with inline buttons
     await show_main_menu(update, context)
-
+    
     # Also show persistent keyboard at bottom
     await show_persistent_keyboard(update, context)
 
@@ -138,9 +137,9 @@ async def show_main_menu(
     if user and user.id in ADMIN_IDS:
         keyboard.append([InlineKeyboardButton(
             "🔐 Админ-панель", callback_data="action_admin")])
-
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     # Main menu message
     message_text = (
         "*👋 Главное меню MegaBuddies WL Bot*\n\n"
@@ -165,9 +164,9 @@ async def show_main_menu(
     else:
         await update.message.reply_text(
             message_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
 
 
 async def help_command(
@@ -184,7 +183,7 @@ async def show_help_menu(
         context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show help information with a back button"""
     user = update.effective_user
-
+    
     # Base commands for all users
     help_text = (
         "*📚 Справка по MegaBuddies*\n\n"
@@ -193,13 +192,13 @@ async def show_help_menu(
         "• `/help` - Показать эту справку\n"
         "• `/check` - Проверить значение в базе\n"
         "• `/menu` - Открыть главное меню\n\n"
-
+        
         "*Как пользоваться ботом:*\n"
         "1️⃣ Просто напишите текст для мгновенной проверки\n"
         "2️⃣ Используйте кнопки меню для навигации\n"
         "3️⃣ Используйте команды для быстрого доступа к функциям\n\n"
     )
-
+    
     # Add admin commands if user is admin
     if user.id in ADMIN_IDS:
         help_text += (
@@ -213,12 +212,12 @@ async def show_help_menu(
             "• `/export` - Экспортировать базу данных в CSV формат\n"
             "• `/import` - Импортировать данные в базу\n\n"
         )
-
+    
     # Add back button
     keyboard = [[InlineKeyboardButton(
         "🏠 Вернуться в главное меню", callback_data="back_to_main")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     await update_or_send_message(
         update,
         context,
@@ -235,7 +234,7 @@ async def show_check_menu(
     keyboard = [[InlineKeyboardButton(
         "◀️ Назад", callback_data="back_to_main")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     message_text = "Введите значение для проверки в базе данных:"
 
     if update.callback_query:
@@ -272,15 +271,15 @@ async def handle_check_value(update: Update,
     """Handle checking a value in the whitelist"""
     user = update.effective_user
     value = update.message.text.strip()
-
+    
     logger.debug(
         f"Проверка значения в базе данных: '{value}' от пользователя {
             user.id}")
 
     try:
-        # Check the value against whitelist
-        result = db.check_whitelist(value)
-
+    # Check the value against whitelist
+    result = db.check_whitelist(value)
+    
         # Log the check event
         db.log_event(
             "check_whitelist", update.effective_user.id, {
@@ -289,12 +288,12 @@ async def handle_check_value(update: Update,
                     "found", False)))
 
         # Create reply markup with buttons for next actions
-        keyboard = [
-            [InlineKeyboardButton("🔄 Проверить другое значение", callback_data="action_check")],
-            [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
+    keyboard = [
+        [InlineKeyboardButton("🔄 Проверить другое значение", callback_data="action_check")],
+        [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
         # Prepare response message
         if result.get("found", False):
             message_text = (
@@ -313,17 +312,17 @@ async def handle_check_value(update: Update,
         # Try to delete the user's message for cleaner interface
         try:
             await update.message.delete()
-        except Exception as e:
+    except Exception as e:
             logger.warning(f"Не удалось удалить сообщение пользователя: {e}")
 
         # Send a new message with the result
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=message_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+    
     except Exception as e:
         logger.error(f"Ошибка при проверке значения в базе данных: {e}")
         await update.message.reply_text(
@@ -351,13 +350,13 @@ async def show_admin_menu(
             await show_main_menu(update, context)
         else:
             await update_or_send_message(
-                update,
+                update, 
                 context,
                 "⛔ У вас нет прав доступа к этому разделу.",
                 parse_mode='Markdown'
             )
         return
-
+    
     # Admin menu keyboard - optimized layout
     keyboard = [
         [
@@ -377,9 +376,9 @@ async def show_admin_menu(
         ],
         [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
     ]
-
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     admin_text = (
         "*👑 Панель администратора*\n\n"
         "Выберите действие из списка ниже:\n\n"
@@ -391,7 +390,7 @@ async def show_admin_menu(
         "• *Экспорт* - выгрузка базы данных в CSV\n"
         "• *Импорт* - загрузка данных из CSV файла\n"
     )
-
+    
     await update_or_send_message(
         update,
         context,
@@ -421,7 +420,7 @@ async def show_stats_menu(
         else:
             await update.message.reply_text("⛔ У вас нет прав доступа к этому разделу.")
         return
-
+    
     # Get statistics
     total_users = db.get_total_users()
     active_users = db.get_active_users()
@@ -431,8 +430,8 @@ async def show_stats_menu(
     last_week_checks = db.get_checks_count(days=7)
 
     # Format message
-    stats_text = (
-        "*📊 Статистика бота*\n\n"
+        stats_text = (
+            "*📊 Статистика бота*\n\n"
         f"*Пользователи:*\n"
         f"Всего пользователей: {total_users}\n"
         f"Активных за 7 дней: {active_users}\n\n"
@@ -450,7 +449,7 @@ async def show_stats_menu(
     keyboard = [[InlineKeyboardButton(
         "🏠 Вернуться в главное меню", callback_data="back_to_main")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     # Update message or send new
     if update.callback_query:
         await update.callback_query.edit_message_text(
@@ -460,10 +459,10 @@ async def show_stats_menu(
         )
     else:
         await update.message.reply_text(
-            stats_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
+        stats_text,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
 
 
 async def show_add_menu(
@@ -475,10 +474,10 @@ async def show_add_menu(
         if update.callback_query:
             await update.callback_query.answer("У вас нет прав доступа к этому разделу.")
         return ConversationHandler.END
-
+    
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="menu_admin")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     if update.callback_query:
         await update.callback_query.edit_message_text(
             "⌨️ Введите значение для добавления в базу данных.\n\n"
@@ -491,7 +490,7 @@ async def show_add_menu(
             "❗️ Важно: следующее сообщение будет добавлено в базу данных.",
             reply_markup=reply_markup
         )
-
+    
     # Устанавливаем флаг, чтобы знать, что следующее сообщение - для
     # добавления в вайтлист
     context.user_data['expecting_add'] = True
@@ -507,7 +506,7 @@ async def handle_add_value(
         context: ContextTypes.DEFAULT_TYPE) -> int:
     """Process the value for whitelist and ask for WL type"""
     value = update.message.text.strip()
-
+    
     # Добавляем логирование
     logger.debug(f"Получено значение для добавления в базу данных: '{value}'")
 
@@ -651,16 +650,16 @@ async def handle_wl_reason(
     try:
         # Добавляем запись в вайтлист
         success = db.add_to_whitelist(value, wl_type, selected_reason)
-
-        # Log event
+    
+    # Log event
         db.log_event("add_whitelist", update.effective_user.id, {
             "value": value,
             "wl_type": wl_type,
             "wl_reason": selected_reason
         }, success)
-
-        # Create response message
-        if success:
+    
+    # Create response message
+    if success:
             logger.debug(f"Значение '{value}' успешно добавлено в базу данных")
             message_text = (
                 f"✅ Запись успешно добавлена в вайтлист!\n\n"
@@ -668,18 +667,18 @@ async def handle_wl_reason(
                 f"*Тип WL:* {wl_type}\n"
                 f"*Причина:* {selected_reason}"
             )
-        else:
+    else:
             logger.debug(f"Значение '{value}' уже существует в базе данных")
-            message_text = f"⚠️ Значение \"{value}\" уже существует в вайтлисте."
-
-        # Buttons for next action
-        keyboard = [
-            [InlineKeyboardButton("➕ Добавить еще", callback_data="admin_add")],
-            [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
-            [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
+        message_text = f"⚠️ Значение \"{value}\" уже существует в вайтлисте."
+    
+    # Buttons for next action
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить еще", callback_data="admin_add")],
+        [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
         # Send the response
         await query.edit_message_text(
             message_text,
@@ -705,17 +704,17 @@ async def handle_wl_reason(
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await query.edit_message_text(
-            message_text,
-            reply_markup=reply_markup
-        )
-
+        message_text,
+        reply_markup=reply_markup
+    )
+    
         # Очищаем данные о добавлении
         if 'add_data' in context.user_data:
             del context.user_data['add_data']
             logger.debug(
                 "Данные add_data очищены из контекста пользователя после ошибки")
 
-        return ConversationHandler.END
+    return ConversationHandler.END
 
 
 async def show_remove_menu(
@@ -727,16 +726,16 @@ async def show_remove_menu(
         if update.callback_query:
             await update.callback_query.answer("У вас нет прав доступа к этому разделу.")
         return ConversationHandler.END
-
+    
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="menu_admin")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     if update.callback_query:
         await update.callback_query.edit_message_text(
             "Введите значение для удаления из вайтлиста:",
             reply_markup=reply_markup
         )
-
+    
     # Устанавливаем флаг, чтобы знать, что следующее сообщение - для удаления
     # из вайтлиста
     context.user_data['expecting_remove'] = True
@@ -748,21 +747,21 @@ async def handle_remove_value(update: Update,
                               context: ContextTypes.DEFAULT_TYPE) -> int:
     """Process removing a value from whitelist"""
     value = update.message.text.strip()
-
+    
     # Remove from whitelist
     success = db.remove_from_whitelist(value)
-
+    
     # Log event
     db.log_event(
         "remove_whitelist", update.effective_user.id, {
             "value": value}, success)
-
+    
     # Create response message
     if success:
         message_text = f"✅ Значение \"{value}\" успешно удалено из вайтлиста!"
     else:
         message_text = f"❌ Значение \"{value}\" не найдено в вайтлисте."
-
+    
     # Buttons for next action
     keyboard = [
         [InlineKeyboardButton("➖ Удалить еще", callback_data="admin_remove")],
@@ -770,7 +769,7 @@ async def handle_remove_value(update: Update,
         [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     # Use delete_and_update_message instead
     await delete_and_update_message(
         update,
@@ -778,7 +777,7 @@ async def handle_remove_value(update: Update,
         message_text,
         reply_markup=reply_markup
     )
-
+    
     return ConversationHandler.END
 
 
@@ -798,10 +797,10 @@ async def show_list_menu(
                 parse_mode='Markdown'
             )
         return
-
+    
     # Get values from whitelist
     items = db.get_all_whitelist()
-
+    
     # Create response message
     if items:
         # Меньше записей на странице, так как каждая запись теперь содержит
@@ -809,61 +808,61 @@ async def show_list_menu(
         items_per_page = 5
         page = context.user_data.get('whitelist_page', 0)
         total_pages = (len(items) + items_per_page - 1) // items_per_page
-
+        
         # Ensure page is valid
         if page >= total_pages:
             page = 0
-
+        
         # Save current page
         context.user_data['whitelist_page'] = page
-
+        
         # Get values for current page
         start = page * items_per_page
         end = min(start + items_per_page, len(items))
-
+        
         message_text = (
             f"*📋 База данных*\n\n"
             f"Всего записей: {len(items)}\n"
             f"Страница {page + 1} из {total_pages}\n\n"
         )
-
+        
         # Add values with numbering in a clean format
         for i, item in enumerate(items[start:end], start=start + 1):
             message_text += (
                 f"{i}. `{item['value']}`\n"
                 f"   Тип: {item['wl_type']}, Причина: {item['wl_reason']}\n\n"
             )
-
+        
         # Navigation buttons
         keyboard = []
         nav_row = []
-
+        
         if total_pages > 1:
             if page > 0:
                 nav_row.append(
                     InlineKeyboardButton(
                         "◀️", callback_data="whitelist_prev"))
-
+            
             nav_row.append(InlineKeyboardButton(
                 f"{page + 1}/{total_pages}", callback_data="whitelist_info"))
-
+            
             if page < total_pages - 1:
                 nav_row.append(
                     InlineKeyboardButton(
                         "▶️", callback_data="whitelist_next"))
-
+            
             keyboard.append(nav_row)
     else:
         message_text = "*📋 База данных*\n\nБаза данных пуста."
-
+    
     # Back buttons
     keyboard.append([InlineKeyboardButton(
         "◀️ Назад к админ-панели", callback_data="menu_admin")])
     keyboard.append([InlineKeyboardButton(
         "🏠 Главное меню", callback_data="back_to_main")])
-
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     await update_or_send_message(
         update,
         context,
@@ -878,19 +877,19 @@ async def handle_whitelist_pagination(
         context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle whitelist pagination buttons"""
     query = update.callback_query
-
+    
     # Get current page
     page = context.user_data.get('whitelist_page', 0)
-
+    
     # Update page based on button
     if query.data == "whitelist_next":
         page += 1
     elif query.data == "whitelist_prev":
         page -= 1
-
+    
     # Save updated page
     context.user_data['whitelist_page'] = page
-
+    
     # Show updated list
     await show_list_menu(update, context)
 
@@ -902,11 +901,11 @@ async def broadcast_command(update: Update,
     if user.id not in ADMIN_IDS:
         await update.message.reply_text("У вас нет прав для использования этой команды.")
         return ConversationHandler.END
-
+    
     keyboard = [[InlineKeyboardButton(
         "❌ Отмена", callback_data="broadcast_cancel")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     # Use update_or_send_message instead of creating a new message
     await update_or_send_message(
         update,
@@ -914,7 +913,7 @@ async def broadcast_command(update: Update,
         "Введите сообщение для отправки всем пользователям:",
         reply_markup=reply_markup
     )
-
+    
     return BROADCAST_MESSAGE
 
 
@@ -922,7 +921,7 @@ async def broadcast_message(update: Update,
                             context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle the message to broadcast"""
     message_text = update.message.text
-
+    
     if not message_text:
         await update_or_send_message(
             update,
@@ -933,9 +932,9 @@ async def broadcast_message(update: Update,
             ]])
         )
         return BROADCAST_MESSAGE
-
+    
     users = db.get_all_users()
-
+    
     if not users:
         await update_or_send_message(
             update,
@@ -946,11 +945,11 @@ async def broadcast_message(update: Update,
             ]])
         )
         return ConversationHandler.END
-
+    
     # Log broadcast event
     db.log_event("broadcast", update.effective_user.id,
                  {"message_length": len(message_text)})
-
+    
     # Try to delete the user's input message
     try:
         await context.bot.delete_message(
@@ -959,26 +958,26 @@ async def broadcast_message(update: Update,
         )
     except Exception as e:
         logger.debug(f"Could not delete user message: {e}")
-
+    
     # Use our main message for progress updates
     await update_or_send_message(
         update,
         context,
         f"Начинаю рассылку для {len(users)} пользователей..."
     )
-
+    
     success_count = 0
     fail_count = 0
-
+    
     # Show progress updates periodically
     progress_interval = max(1, len(users) // 10)
     last_progress_update = time.time()
-
+    
     for i, (user_id, chat_id) in enumerate(users):
         try:
             await context.bot.send_message(chat_id=chat_id, text=message_text)
             success_count += 1
-
+            
             # Update progress message periodically
             if (i % progress_interval == 0 or i == len(users) -
                     1) and time.time() - last_progress_update > 2:
@@ -991,20 +990,20 @@ async def broadcast_message(update: Update,
                     f"❌ Ошибок: {fail_count}"
                 )
                 last_progress_update = time.time()
-
+            
             # Add a small delay to avoid hitting rate limits
             await asyncio.sleep(0.05)
         except Exception as e:
             logger.error(f"Failed to send message to user {user_id}: {e}")
             fail_count += 1
-
+    
     # Final results with buttons
     keyboard = [
         [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     await update_or_send_message(
         update,
         context,
@@ -1015,7 +1014,7 @@ async def broadcast_message(update: Update,
         f"• Ошибок доставки: {fail_count}",
         reply_markup=reply_markup
     )
-
+    
     return ConversationHandler.END
 
 
@@ -1025,14 +1024,14 @@ async def cancel_broadcast(
     """Cancel the broadcast conversation"""
     query = update.callback_query
     await query.answer()
-
+    
     await query.edit_message_text(
         "❌ Рассылка отменена.",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")
         ]])
     )
-
+    
     return ConversationHandler.END
 
 
@@ -1040,12 +1039,12 @@ async def show_broadcast_menu(update: Update,
                               context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show menu for broadcast with options"""
     user = update.effective_user
-
+    
     if user.id not in ADMIN_IDS:
         if update.callback_query:
             await update.callback_query.answer("У вас нет прав доступа к этому разделу.")
         return
-
+    
     # Instructions for broadcast
     broadcast_text = (
         "*📣 Рассылка сообщений*\n\n"
@@ -1053,14 +1052,14 @@ async def show_broadcast_menu(update: Update,
         "выберите 'Начать рассылку' и введите текст сообщения.\n\n"
         "После отправки текста сообщения, бот начнет рассылку."
     )
-
+    
     # Add buttons
     keyboard = [
         [InlineKeyboardButton("✉️ Начать рассылку", callback_data="start_broadcast")],
         [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     if update.callback_query:
         # Edit message if callback query
         await update.callback_query.edit_message_text(
@@ -1083,11 +1082,11 @@ async def start_broadcast_from_button(
     """Start broadcast process from button click"""
     query = update.callback_query
     user = update.effective_user
-
+    
     if user.id not in ADMIN_IDS:
         await query.answer("У вас нет прав доступа к этому разделу.")
         return
-
+    
     # Show message asking for broadcast text
     await query.edit_message_text(
         "*📣 Введите текст сообщения для рассылки:*\n\n"
@@ -1097,7 +1096,7 @@ async def start_broadcast_from_button(
             InlineKeyboardButton("❌ Отменить", callback_data="broadcast_cancel")
         ]])
     )
-
+    
     # Set context variable to expect broadcast message
     context.user_data['expecting_broadcast'] = True
 
@@ -1108,11 +1107,11 @@ async def start_broadcast_process(
     """Process broadcast message and start sending"""
     message_text = update.message.text
     user = update.effective_user
-
+    
     if user.id not in ADMIN_IDS:
         await update.message.reply_text("У вас нет прав доступа к этому разделу.")
         return
-
+    
     # Validate message
     if not message_text or len(message_text.strip()) == 0:
         await update.message.reply_text(
@@ -1122,10 +1121,10 @@ async def start_broadcast_process(
             ]])
         )
         return
-
+    
     # Get users for broadcasting
     users = db.get_all_users()
-
+    
     if not users:
         await update.message.reply_text(
             "В базе нет пользователей для рассылки.",
@@ -1134,27 +1133,27 @@ async def start_broadcast_process(
             ]])
         )
         return
-
+    
     # Start broadcast
     status_message = await update.message.reply_text(
         f"🔄 Начинаю рассылку для {len(users)} пользователей...\n\n"
         f"Это может занять некоторое время."
     )
-
+    
     # Send messages
     success_count = 0
     fail_count = 0
-
+    
     for i, (user_id, chat_id) in enumerate(users):
         try:
             # Send the message
             await context.bot.send_message(
-                chat_id=chat_id,
+                chat_id=chat_id, 
                 text=message_text,
                 disable_notification=False
             )
             success_count += 1
-
+            
             # Update status message every 10 users
             if (i + 1) % 10 == 0 or i + 1 == len(users):
                 await status_message.edit_text(
@@ -1162,13 +1161,13 @@ async def start_broadcast_process(
                     f"✅ Успешно: {success_count}\n"
                     f"❌ Ошибок: {fail_count}"
                 )
-
+            
             # Add a small delay to avoid hitting rate limits
             await asyncio.sleep(0.05)
         except Exception as e:
             logger.error(f"Failed to send message to user {user_id}: {e}")
             fail_count += 1
-
+    
     # Final status
     await status_message.edit_text(
         f"✅ Рассылка завершена!\n\n"
@@ -1180,7 +1179,7 @@ async def start_broadcast_process(
             InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")
         ]])
     )
-
+    
     # Log broadcast event
     db.log_event("broadcast", user.id, {
         "total": len(users),
@@ -1194,17 +1193,17 @@ async def show_persistent_keyboard(
         context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show a minimal persistent keyboard at the bottom of the chat"""
     user = update.effective_user
-
+    
     # Create keyboard buttons - simplified for cleaner UI
     keyboard = []
-
+    
     # Base navigation for all users including Links/FAQ
     keyboard.append(["🔍 Проверить", "📚 Ссылки/FAQ", "🏠 Меню"])
-
+    
     # Add admin button if user is admin
     if user.id in ADMIN_IDS:
         keyboard.append(["👑 Админ"])
-
+    
     # Create the reply markup with the keyboard
     reply_markup = ReplyKeyboardMarkup(
         keyboard,
@@ -1213,7 +1212,7 @@ async def show_persistent_keyboard(
         selective=False,           # Show to all users in the chat
         input_field_placeholder="Введите текст для проверки..."  # Helpful placeholder
     )
-
+    
     # Set the keyboard without sending a message or with a minimal message
     # Determine the appropriate chat_id
     chat_id = None
@@ -1236,10 +1235,10 @@ async def show_persistent_keyboard(
 
 
 async def delete_and_update_message(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    text: str,
-    reply_markup=None,
+    update: Update, 
+    context: ContextTypes.DEFAULT_TYPE, 
+    text: str, 
+    reply_markup=None, 
     parse_mode=None
 ) -> None:
     """Delete user message and update the single bot message or send a new one"""
@@ -1252,7 +1251,7 @@ async def delete_and_update_message(
             )
         except Exception as e:
             logger.debug(f"Could not delete user message: {e}")
-
+    
     # Then update the bot's single message
     await update_or_send_message(update, context, text, reply_markup, parse_mode)
 
@@ -1271,10 +1270,10 @@ async def save_active_message(
 
 
 async def update_or_send_message(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    text: str,
-    reply_markup=None,
+    update: Update, 
+    context: ContextTypes.DEFAULT_TYPE, 
+    text: str, 
+    reply_markup=None, 
     parse_mode=None
 ) -> None:
     """Update existing message or send a new one for clean interface"""
@@ -1289,7 +1288,7 @@ async def update_or_send_message(
             return
         except Exception as e:
             logger.debug(f"Could not edit callback query message: {e}")
-
+    
     # If we have an active message ID for this chat, try to edit it
     chat_id = chat_id_from_update(update)
     if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
@@ -1306,7 +1305,7 @@ async def update_or_send_message(
         except Exception as e:
             logger.debug(
                 f"Could not edit active message {active_message_id}: {e}")
-
+    
     # If we couldn't edit, send a new message
     if update.message:
         message = await update.message.reply_text(
@@ -1321,7 +1320,7 @@ async def update_or_send_message(
             reply_markup=reply_markup,
             parse_mode=parse_mode
         )
-
+    
     # Store the message ID as the active one for this chat
     context.chat_data[BOT_ACTIVE_MESSAGE_KEY] = message.message_id
 
@@ -1331,28 +1330,28 @@ async def clean_old_bot_messages(
         context: ContextTypes.DEFAULT_TYPE) -> None:
     """Clean up old bot messages to keep chat clean, except the active message"""
     chat_id = chat_id_from_update(update)
-
+    
     # If we have an active message, keep track of it
     active_message_id = None
     if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
         active_message_id = context.chat_data[BOT_ACTIVE_MESSAGE_KEY]
-
+    
     # Try to get recent messages to delete old ones
     try:
         # We can only delete recent messages that the bot sent
         # We'll use getUpdates with a limit to avoid excessive API calls
         # This is an approximation as getUpdates has limitations
         recent_updates = await context.bot.get_updates(limit=10, timeout=0)
-
+        
         # Find messages from this bot in this chat
         bot_id = context.bot.id
         for bot_update in recent_updates:
-            if (bot_update.message and
-                bot_update.message.from_user and
+            if (bot_update.message and 
+                bot_update.message.from_user and 
                 bot_update.message.from_user.id == bot_id and
                 bot_update.message.chat_id == chat_id and
-                    (active_message_id is None or bot_update.message.message_id != active_message_id)):
-
+                (active_message_id is None or bot_update.message.message_id != active_message_id)):
+                
                 # Try to delete this old message
                 try:
                     await context.bot.delete_message(
@@ -1384,12 +1383,12 @@ async def handle_message(
     """Handler for processing all non-command messages"""
     if not update.message or not update.message.text:
         return
-
+    
     # Update user activity
     db.update_user_activity(update.effective_user.id)
-
+    
     text = update.message.text.strip()
-
+    
     # Добавляем логирование для диагностики
     user_id = update.effective_user.id
     logger.debug(f"Получено сообщение от пользователя {user_id}: '{text}'")
@@ -1412,7 +1411,7 @@ async def handle_message(
     elif text == "👑 Админ" and update.effective_user.id in ADMIN_IDS:
         await show_admin_menu(update, context)
         return
-
+    
     # Handle conversation states with явным приоритетом для добавления и
     # удаления
     if context.user_data.get('expecting_add'):
@@ -1443,52 +1442,52 @@ async def handle_message(
         # Treat any text as a check query for simplicity
         logger.debug(
             f"Обработка обычного сообщения как проверки в базе данных: '{text}'")
-
+        
         try:
-            # Check the value against whitelist
-            value = text
-            result = db.check_whitelist(value)
+        # Check the value against whitelist
+        value = text
+        result = db.check_whitelist(value)
             user = update.effective_user
-
-            # Create beautiful response
+        
+        # Create beautiful response
             if result.get("found", False):
-                message_text = (
-                    f"*✅ Результат проверки*\n\n"
+            message_text = (
+                f"*✅ Результат проверки*\n\n"
                     f"Привет, {user.first_name}! 👋\n\n"
                     f"Значение `{value}` *найдено* в базе данных!\n\n"
                     f"У вас {result.get('wl_type', 'Не указан')} WL потому что вы {result.get('wl_reason', 'Не указана')}! 🎉"
-                )
-            else:
-                message_text = (
-                    f"*❌ Результат проверки*\n\n"
+            )
+        else:
+            message_text = (
+                f"*❌ Результат проверки*\n\n"
                     f"Нам жаль, {user.first_name}, но введенного значения пока нет в BuddyWL.\n\n"
                     f"Мы с нетерпением ждем твой вклад и надеемся скоро увидеть тебя уже вместе с твоим Buddy! 💫"
-                )
-
-            # Buttons for next action
-            keyboard = [
+            )
+        
+        # Buttons for next action
+        keyboard = [
                 [InlineKeyboardButton("🔄 Проверить другое значение", callback_data="action_check")],
-                [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            # Try to delete the user message for cleaner interface
-            try:
-                await context.bot.delete_message(
-                    chat_id=update.message.chat_id,
-                    message_id=update.message.message_id
-                )
-            except Exception as e:
-                logger.debug(f"Could not delete user message: {e}")
-
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Try to delete the user message for cleaner interface
+        try:
+            await context.bot.delete_message(
+                chat_id=update.message.chat_id,
+                message_id=update.message.message_id
+            )
+        except Exception as e:
+            logger.debug(f"Could not delete user message: {e}")
+        
             # Всегда отправляем новое сообщение с результатом
             chat_id = update.effective_chat.id
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=message_text,
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
-            )
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
 
         except Exception as e:
             logger.error(f"Ошибка при проверке значения в базе данных: {e}")
@@ -1597,18 +1596,18 @@ async def button_callback(
         # Extract the value to remove
         value_to_remove = callback_data[7:]  # Remove "remove_" prefix
         success = db.remove_from_whitelist(value_to_remove)
-
+        
         # Create response message with buttons
         if success:
             message_text = f"Значение '{value_to_remove}' успешно удалено из вайтлиста."
         else:
             message_text = f"Не удалось удалить значение '{value_to_remove}' из вайтлиста."
-
+        
         # Add a button to go back to admin menu
         keyboard = [[InlineKeyboardButton(
             "◀️ Назад к админ-панели", callback_data="menu_admin")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-
+        
         # Use delete_and_update_message instead of direct edit
         await delete_and_update_message(
             update,
@@ -2113,14 +2112,14 @@ async def error_handler(
                 await update.effective_message.reply_text(
                     "⚠️ Произошла ошибка при обработке вашего запроса. "
                     "Пожалуйста, проверьте ввод и попробуйте снова.",
-                    disable_web_page_preview=True  # Используем старый параметр вместо link_preview_options
+                    disable_web_page_preview=True
                 )
             else:
                 # For any other errors, send generic message to user
                 await update.effective_message.reply_text(
                     "🛑 Произошла внутренняя ошибка. Администраторы уведомлены. "
                     "Пожалуйста, попробуйте позже или обратитесь к администратору.",
-                    disable_web_page_preview=True  # Используем старый параметр вместо link_preview_options
+                    disable_web_page_preview=True
                 )
 
                 # Try to restore the conversation state if needed
@@ -2184,7 +2183,7 @@ def main() -> None:
     if not token:
         logger.error("No BOT_TOKEN found in environment variables!")
         return
-
+    
     # Initialize database
     try:
         logger.info("Initializing database...")
@@ -2194,11 +2193,11 @@ def main() -> None:
     except Exception as e:
         logger.error(f"Error initializing database: {e}")
         return
-
+    
     # Set higher persistence and stability options
+    # Не используем параметр disable_web_page_preview в Defaults
     defaults = Defaults(
         parse_mode='Markdown',
-        disable_web_page_preview=True,  # Возврат к старому параметру вместо link_preview_options=False
         allow_sending_without_reply=True,
         block=False  # Асинхронная отправка сообщений
     )
@@ -2227,7 +2226,7 @@ def main() -> None:
     application.add_handler(CommandHandler("admin", show_admin_menu))
     application.add_handler(CommandHandler("export", export_command))
     application.add_handler(CommandHandler("import", import_command))
-
+    
     # Add conversation handler for check
     check_conv_handler = ConversationHandler(
         entry_points=[
@@ -2248,7 +2247,7 @@ def main() -> None:
         persistent=False,
         per_chat=True)
     application.add_handler(check_conv_handler)
-
+    
     # Add conversation handler for adding values
     add_conv_handler = ConversationHandler(
         entry_points=[
@@ -2277,7 +2276,7 @@ def main() -> None:
         persistent=False,
         per_chat=True)
     application.add_handler(add_conv_handler)
-
+    
     # Add conversation handler for removing values
     remove_conv_handler = ConversationHandler(
         entry_points=[
@@ -2298,7 +2297,7 @@ def main() -> None:
         persistent=False,
         per_chat=True)
     application.add_handler(remove_conv_handler)
-
+    
     # Add conversation handler for broadcasting messages
     broadcast_conv_handler = ConversationHandler(
         entry_points=[
@@ -2319,7 +2318,7 @@ def main() -> None:
         persistent=False,
         per_chat=True)
     application.add_handler(broadcast_conv_handler)
-
+    
     # Add handler for document uploads (for import)
     application.add_handler(
         MessageHandler(
@@ -2329,17 +2328,17 @@ def main() -> None:
     # Add callback query handler - перемещено после ConversationHandler, но
     # перед MessageHandler
     application.add_handler(CallbackQueryHandler(button_callback))
-
+    
     # Add message handler to catch all unhandled messages
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             handle_message))
-
+    
     # Start the Bot
     logger.info("Starting the bot...")
     application.run_polling()
-
+    
 
 if __name__ == "__main__":
-    main()
+    main() 
