@@ -81,22 +81,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Log the event
     db.log_event("start", user.id)
     
-    # Приветственное сообщение с красивым форматированием
-    welcome_text = (
-        f"👋 *Добро пожаловать, {user.first_name}!*\n\n"
-        f"Я бот *MegaBuddies*, который поможет вам проверить информацию в нашей базе данных.\n\n"
-        f"🔹 Просто отправьте мне текст для проверки в базе\n"
-        f"🔹 Или используйте встроенные кнопки меню для навигации\n\n"
-        f"Открываю главное меню..."
-    )
-    
-    # First send welcome message
-    message = await update.message.reply_text(
-        welcome_text,
-        parse_mode='Markdown'
-    )
-    
-    # Then show main menu with inline buttons
+    # Show main menu with inline buttons
     await show_main_menu(update, context)
     
     # Also show persistent keyboard at bottom
@@ -107,12 +92,17 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Keyboard for main menu
     keyboard = [
         [InlineKeyboardButton("🔍 Проверить", callback_data="action_check")],
-        [InlineKeyboardButton("📊 Статистика", callback_data="action_stats"), 
-         InlineKeyboardButton("📚 Ссылки/FAQ", callback_data="action_links")],
     ]
     
-    # Add admin panel button if user is admin
+    # Add stats button only for admins
     user = update.effective_user
+    if user and user.id in ADMIN_IDS:
+        keyboard.append([InlineKeyboardButton("📊 Статистика", callback_data="action_stats")])
+    
+    # Add links/FAQ button
+    keyboard.append([InlineKeyboardButton("📚 Ссылки/FAQ", callback_data="action_links")])
+    
+    # Add admin panel button if user is admin
     if user and user.id in ADMIN_IDS:
         keyboard.append([InlineKeyboardButton("🔐 Админ-панель", callback_data="action_admin")])
     
@@ -123,9 +113,12 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "*👋 Главное меню MegaBuddies WL Bot*\n\n"
         "Здесь вы можете:\n"
         "• Проверить адрес в вайтлисте\n"
-        "• Просмотреть статистику\n"
-        "• Найти полезные ссылки и FAQ\n"
     )
+    
+    if user and user.id in ADMIN_IDS:
+        message_text += "• Просмотреть статистику\n"
+    
+    message_text += "• Найти полезные ссылки и FAQ\n"
     
     if user and user.id in ADMIN_IDS:
         message_text += "• Управлять вайтлистом (админ)\n"
@@ -338,89 +331,58 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await show_stats_menu(update, context)
 
 async def show_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show bot statistics for admin"""
+    """Show statistics of the bot usage"""
     user = update.effective_user
+    
+    # Check if user is admin
     if user.id not in ADMIN_IDS:
-        # If not admin, show error
         if update.callback_query:
             await update.callback_query.answer("У вас нет прав доступа к этому разделу.")
         else:
-            message = await update.message.reply_text("У вас нет прав доступа к этому разделу.")
-            await save_active_message(update, context, message)
+            await update.message.reply_text("⛔ У вас нет прав доступа к этому разделу.")
         return
     
-    try:
-        # Get stats from database
-        stats = db.get_stats()
-        
-        # Format statistics message
-        stats_text = (
-            "*📊 Статистика бота*\n\n"
-            
-            "*👥 Пользователи:*\n"
-            f"• Всего: {stats['users']['total']}\n"
-        )
-        
-        # Add additional user stats if available
-        if 'new_7d' in stats['users']:
-            stats_text += f"• Новых за 7 дней: {stats['users']['new_7d']}\n"
-        if 'new_1d' in stats['users']:
-            stats_text += f"• Новых за 24 часа: {stats['users']['new_1d']}\n"
-        if 'active_7d' in stats['users']:
-            stats_text += f"• Активных за 7 дней: {stats['users']['active_7d']}\n"
-        
-        stats_text += f"\n*📋 База данных:*\n"
-        stats_text += f"• Записей в вайтлисте: {stats['whitelist']['total']}\n\n"
-        
-        # Add check stats if available
-        if 'checks' in stats:
-            stats_text += (
-                "*🔍 Проверки:*\n"
-                f"• За 7 дней: {stats['checks'].get('total_7d', 0)}\n"
-                f"  ✅ Успешных: {stats['checks'].get('successful_7d', 0)}\n"
-                f"  ❌ Неудачных: {stats['checks'].get('failed_7d', 0)}\n"
-                f"• За 24 часа: {stats['checks'].get('total_1d', 0)}\n"
-                f"  ✅ Успешных: {stats['checks'].get('successful_1d', 0)}\n"
-                f"  ❌ Неудачных: {stats['checks'].get('failed_1d', 0)}\n\n"
-            )
-        
-        # Add daily activity if available
-        stats_text += "*📅 Активность по дням:*\n"
-        daily_activity = stats.get('daily_activity', {})
-        if daily_activity:
-            for day, count in daily_activity.items():
-                stats_text += f"• {day}: {count}\n"
-        else:
-            stats_text += "Нет данных\n"
-        
-        # Add error info if present
-        if 'error' in stats:
-            stats_text += f"\n⚠️ *Примечание:* Данные могут быть неполными ({stats['error']})\n"
-        
-    except Exception as e:
-        # Fallback message if stats generation fails
-        logger.error(f"Error generating stats: {e}")
-        stats_text = (
-            "*📊 Статистика бота*\n\n"
-            "⚠️ Произошла ошибка при получении статистики.\n"
-            f"Детали ошибки: {str(e)}\n\n"
-            "Попробуйте позже или обратитесь к разработчику."
-        )
+    # Get statistics
+    total_users = db.get_total_users()
+    active_users = db.get_active_users()
+    whitelist_count = db.get_whitelist_count()
+    checks_count = db.get_checks_count()
+    last_day_checks = db.get_checks_count(days=1)
+    last_week_checks = db.get_checks_count(days=7)
     
-    # Back buttons
-    keyboard = [
-        [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
-    ]
+    # Format message
+    stats_text = (
+        "*📊 Статистика бота*\n\n"
+        f"*Пользователи:*\n"
+        f"Всего пользователей: {total_users}\n"
+        f"Активных за 7 дней: {active_users}\n\n"
+        
+        f"*База данных:*\n"
+        f"Записей в базе: {whitelist_count}\n\n"
+        
+        f"*Проверки:*\n"
+        f"Всего проверок: {checks_count}\n"
+        f"За последние 24 часа: {last_day_checks}\n"
+        f"За последнюю неделю: {last_week_checks}\n"
+    )
+    
+    # Add back button
+    keyboard = [[InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await update_or_send_message(
-        update,
-        context,
-        stats_text,
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
+    # Update message or send new
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            stats_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    else:
+        await update.message.reply_text(
+            stats_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
 
 async def show_add_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show menu for adding a value to whitelist"""
@@ -1086,8 +1048,8 @@ async def show_persistent_keyboard(update: Update, context: ContextTypes.DEFAULT
     # Create keyboard buttons - simplified for cleaner UI
     keyboard = []
     
-    # Just basic navigation - minimalist approach
-    keyboard.append(["🔍 Проверить", "🏠 Меню"])
+    # Base navigation for all users including Links/FAQ
+    keyboard.append(["🔍 Проверить", "📚 Ссылки/FAQ", "🏠 Меню"])
     
     # Add admin button if user is admin
     if user.id in ADMIN_IDS:
@@ -1104,8 +1066,9 @@ async def show_persistent_keyboard(update: Update, context: ContextTypes.DEFAULT
     
     # Set the keyboard without sending a message
     if update.message:
-        await update.message.reply_text(
-            "⌨️ Клавиатура активирована",
+        await context.bot.send_message(
+            chat_id=update.message.chat_id,
+            text="⌨️ Клавиатура активирована",
             reply_markup=reply_markup
         )
     elif update.callback_query:
@@ -1270,6 +1233,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if text == "🔍 Проверить":
         await show_check_menu(update, context)
         return
+    elif text == "📚 Ссылки/FAQ":
+        await show_links_menu(update, context)
+        return
     elif text == "🏠 Меню":
         await show_main_menu(update, context)
         return
@@ -1365,7 +1331,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await show_check_menu(update, context)
     elif callback_data == "action_stats":
         logger.debug(f"User {update.effective_user.id} pressed Stats button")
-        await show_stats(update, context)
+        await show_stats_menu(update, context)
     elif callback_data == "action_links":
         logger.debug(f"User {update.effective_user.id} pressed Links/FAQ button")
         await show_links_menu(update, context)
