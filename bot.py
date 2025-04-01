@@ -52,7 +52,6 @@ AWAITING_ADD_VALUE = 2
 AWAITING_REMOVE_VALUE = 3
 AWAITING_WL_TYPE = 4
 AWAITING_WL_REASON = 5
-AWAITING_IMPORT_FILE = 10  # Use a unique number
 
 # WL types and reasons
 WL_TYPES = ["GTD", "FCFS"]
@@ -173,7 +172,7 @@ async def show_help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "• `/broadcast` - Отправить сообщение пользователям\n"
             "• `/stats` - Показать статистику бота\n"
             "• `/export` - Экспортировать базу данных в CSV формат\n"
-            "• `/import` - Импортировать данные из CSV файла\n\n"
+            "• `/import` - Импортировать данные в базу\n\n"
         )
     
     # Add back button
@@ -230,19 +229,19 @@ async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     logger.debug(f"Проверка значения в базе данных: '{value}' от пользователя {user.id}")
     
     try:
-    # Check the value against whitelist
-    result = db.check_whitelist(value)
-    
+        # Check the value against whitelist
+        result = db.check_whitelist(value)
+        
         # Log the check event
         db.log_event("check_whitelist", update.effective_user.id, {"value": value}, bool(result.get("found", False)))
         
         # Create reply markup with buttons for next actions
-    keyboard = [
-        [InlineKeyboardButton("🔄 Проверить другое значение", callback_data="action_check")],
-        [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
+        keyboard = [
+            [InlineKeyboardButton("🔄 Проверить другое значение", callback_data="action_check")],
+            [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         # Prepare response message
         if result.get("found", False):
             message_text = (
@@ -261,17 +260,17 @@ async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Try to delete the user's message for cleaner interface
         try:
             await update.message.delete()
-    except Exception as e:
+        except Exception as e:
             logger.warning(f"Не удалось удалить сообщение пользователя: {e}")
         
         # Send a new message with the result
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=message_text,
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-    
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+        
     except Exception as e:
         logger.error(f"Ошибка при проверке значения в базе данных: {e}")
         await update.message.reply_text(
@@ -334,7 +333,7 @@ async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "• *Статистика* - просмотр статистики использования\n"
         "• *Рассылка* - отправка сообщений пользователям\n"
         "• *Экспорт* - выгрузка базы данных в CSV\n"
-        "• *Импорт* - загрузка данных из CSV\n"
+        "• *Импорт* - загрузка данных из CSV файла\n"
     )
     
     await update_or_send_message(
@@ -370,8 +369,8 @@ async def show_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     last_week_checks = db.get_checks_count(days=7)
     
     # Format message
-        stats_text = (
-            "*📊 Статистика бота*\n\n"
+    stats_text = (
+        "*📊 Статистика бота*\n\n"
         f"*Пользователи:*\n"
         f"Всего пользователей: {total_users}\n"
         f"Активных за 7 дней: {active_users}\n\n"
@@ -398,10 +397,10 @@ async def show_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
     else:
         await update.message.reply_text(
-        stats_text,
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
+            stats_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
 
 async def show_add_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show menu for adding a value to whitelist"""
@@ -565,16 +564,16 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         # Добавляем запись в вайтлист
         success = db.add_to_whitelist(value, wl_type, selected_reason)
-    
-    # Log event
+        
+        # Log event
         db.log_event("add_whitelist", update.effective_user.id, {
             "value": value, 
             "wl_type": wl_type, 
             "wl_reason": selected_reason
         }, success)
-    
-    # Create response message
-    if success:
+        
+        # Create response message
+        if success:
             logger.debug(f"Значение '{value}' успешно добавлено в базу данных")
             message_text = (
                 f"✅ Запись успешно добавлена в вайтлист!\n\n"
@@ -582,18 +581,18 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 f"*Тип WL:* {wl_type}\n"
                 f"*Причина:* {selected_reason}"
             )
-    else:
+        else:
             logger.debug(f"Значение '{value}' уже существует в базе данных")
-        message_text = f"⚠️ Значение \"{value}\" уже существует в вайтлисте."
-    
-    # Buttons for next action
-    keyboard = [
-        [InlineKeyboardButton("➕ Добавить еще", callback_data="admin_add")],
-        [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
+            message_text = f"⚠️ Значение \"{value}\" уже существует в вайтлисте."
+        
+        # Buttons for next action
+        keyboard = [
+            [InlineKeyboardButton("➕ Добавить еще", callback_data="admin_add")],
+            [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         # Send the response
         await query.edit_message_text(
             message_text,
@@ -614,21 +613,21 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         
         keyboard = [
             [InlineKeyboardButton("↩️ Попробовать снова", callback_data="admin_add")],
-            [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
+            [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(
-        message_text,
-        reply_markup=reply_markup
-    )
+            message_text,
+            reply_markup=reply_markup
+        )
         
         # Очищаем данные о добавлении
         if 'add_data' in context.user_data:
             del context.user_data['add_data']
             logger.debug("Данные add_data очищены из контекста пользователя после ошибки")
-    
-    return ConversationHandler.END
+        
+        return ConversationHandler.END
 
 async def show_remove_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show menu for removing a value from whitelist"""
@@ -1287,50 +1286,50 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.debug(f"Обработка обычного сообщения как проверки в базе данных: '{text}'")
         
         try:
-        # Check the value against whitelist
-        value = text
-        result = db.check_whitelist(value)
+            # Check the value against whitelist
+            value = text
+            result = db.check_whitelist(value)
             user = update.effective_user
-        
-        # Create beautiful response
+            
+            # Create beautiful response
             if result.get("found", False):
-            message_text = (
-                f"*✅ Результат проверки*\n\n"
+                message_text = (
+                    f"*✅ Результат проверки*\n\n"
                     f"Привет, {user.first_name}! 👋\n\n"
                     f"Значение `{value}` *найдено* в базе данных!\n\n"
                     f"У вас {result.get('wl_type', 'Не указан')} WL потому что вы {result.get('wl_reason', 'Не указана')}! 🎉"
-            )
-        else:
-            message_text = (
-                f"*❌ Результат проверки*\n\n"
+                )
+            else:
+                message_text = (
+                    f"*❌ Результат проверки*\n\n"
                     f"Нам жаль, {user.first_name}, но введенного значения пока нет в BuddyWL.\n\n"
                     f"Мы с нетерпением ждем твой вклад и надеемся скоро увидеть тебя уже вместе с твоим Buddy! 💫"
-            )
-        
-        # Buttons for next action
-        keyboard = [
+                )
+            
+            # Buttons for next action
+            keyboard = [
                 [InlineKeyboardButton("🔄 Проверить другое значение", callback_data="action_check")],
-            [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        # Try to delete the user message for cleaner interface
-        try:
-            await context.bot.delete_message(
-                chat_id=update.message.chat_id,
-                message_id=update.message.message_id
-            )
-        except Exception as e:
-            logger.debug(f"Could not delete user message: {e}")
-        
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            # Try to delete the user message for cleaner interface
+            try:
+                await context.bot.delete_message(
+                    chat_id=update.message.chat_id,
+                    message_id=update.message.message_id
+                )
+            except Exception as e:
+                logger.debug(f"Could not delete user message: {e}")
+            
             # Всегда отправляем новое сообщение с результатом
             chat_id = update.effective_chat.id
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=message_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
             
         except Exception as e:
             logger.error(f"Ошибка при проверке значения в базе данных: {e}")
@@ -1393,12 +1392,27 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif callback_data == "admin_export":
         await handle_export_button(update, context)
     elif callback_data == "admin_import":
-        await handle_admin_import(update, context)
+        await show_import_menu(update, context)
     # Import actions
-    elif callback_data == "import_add" or callback_data == "import_replace":
-        await handle_import_mode_selection(update, context)
-    elif callback_data == "cancel_import":
-        await cancel_import(update, context)
+    elif callback_data == "import_append":
+        await process_import(update, context, "append")
+    elif callback_data == "import_replace":
+        await process_import(update, context, "replace")
+    elif callback_data == "import_cancel":
+        # Clean up any temporary files
+        if 'import_file_path' in context.user_data:
+            import os
+            try:
+                os.remove(context.user_data['import_file_path'])
+                logger.debug(f"Temporary file {context.user_data['import_file_path']} deleted")
+            except Exception as e:
+                logger.warning(f"Could not delete temporary file: {e}")
+            
+            # Clear the stored file path
+            del context.user_data['import_file_path']
+        
+        # Return to admin menu
+        await show_admin_menu(update, context)
     # Whitelist pagination
     elif callback_data == "whitelist_next" or callback_data == "whitelist_prev":
         await handle_whitelist_pagination(update, context)
@@ -1505,7 +1519,7 @@ async def setup_commands(application: Application) -> None:
         BotCommand("broadcast", "Отправить сообщение всем пользователям"),
         BotCommand("stats", "Показать статистику использования бота"),
         BotCommand("export", "Экспортировать базу данных в CSV формат"),
-        BotCommand("import", "Импортировать данные из CSV файла")
+        BotCommand("import", "Импортировать данные в базу")
     ]
     
     # Set commands for all users
@@ -1634,7 +1648,7 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await progress_message.edit_text(f"❌ Ошибка при экспорте данных: {str(e)}")
 
 async def import_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler for the /import command - imports whitelist from CSV"""
+    """Handler for the /import command - starts the import process"""
     user = update.effective_user
     
     # Only admins can import data
@@ -1642,228 +1656,244 @@ async def import_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("⛔ У вас нет прав для импорта данных.")
         return
     
-    # Show import menu
-    await show_import_menu(update, context)
+    # Show import instructions
+    message_text = (
+        "*📥 Импорт данных в базу*\n\n"
+        "Отправьте CSV-файл с данными для импорта.\n\n"
+        "Формат файла:\n"
+        "• CSV с разделителями-запятыми\n"
+        "• Можно с заголовками или без\n"
+        "• Столбцы: value, wl_type, wl_reason\n"
+        "• Минимально необходим только столбец value\n\n"
+        "После загрузки файла вы сможете выбрать режим импорта:\n"
+        "• *Добавление* - добавит новые записи к существующим\n"
+        "• *Замена* - удалит все существующие записи и загрузит новые"
+    )
+    
+    # Set the expected file flag
+    context.user_data['expecting_import_file'] = True
+    
+    # Send import instructions
+    await update.message.reply_text(
+        message_text,
+        parse_mode='Markdown'
+    )
+
+async def handle_import_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle CSV file upload for import"""
+    user = update.effective_user
+    
+    # Only admins can import data
+    if user.id not in ADMIN_IDS:
+        return
+    
+    # Check if we're expecting an import file
+    if not context.user_data.get('expecting_import_file', False):
+        return
+    
+    # Reset the flag
+    context.user_data['expecting_import_file'] = False
+    
+    # Process the file
+    if update.message.document:
+        file = update.message.document
+        
+        # Check if it's a CSV file
+        file_name = file.file_name
+        if not file_name.lower().endswith('.csv'):
+            await update.message.reply_text(
+                "❌ Пожалуйста, загрузите файл в формате CSV. "
+                "Файл должен иметь расширение .csv",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("↩️ Попробовать снова", callback_data="admin_import")
+                ]])
+            )
+            return
+        
+        # Show processing message
+        progress_message = await update.message.reply_text(
+            "⏳ Загрузка и обработка файла...",
+            reply_markup=None
+        )
+        
+        try:
+            # Download the file
+            file_info = await context.bot.get_file(file.file_id)
+            downloaded_file = await file_info.download_as_bytearray()
+            
+            # Save to temporary file
+            import tempfile
+            import os
+            
+            temp_dir = tempfile.gettempdir()
+            temp_file_path = os.path.join(temp_dir, file_name)
+            
+            with open(temp_file_path, 'wb') as f:
+                f.write(downloaded_file)
+            
+            # Store file path in context for later processing
+            context.user_data['import_file_path'] = temp_file_path
+            
+            # Show import options
+            await progress_message.edit_text(
+                f"✅ Файл {file_name} успешно загружен.\n\n"
+                "Выберите режим импорта:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📝 Добавить к существующим", callback_data="import_append")],
+                    [InlineKeyboardButton("🔄 Заменить все данные", callback_data="import_replace")],
+                    [InlineKeyboardButton("❌ Отменить импорт", callback_data="import_cancel")]
+                ])
+            )
+            
+            # Log event
+            db.log_event("import_file_upload", user.id, {"filename": file_name}, True)
+            
+        except Exception as e:
+            logger.error(f"Error processing import file: {e}")
+            await progress_message.edit_text(
+                f"❌ Ошибка при обработке файла: {str(e)}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("↩️ Попробовать снова", callback_data="admin_import")
+                ]])
+            )
+    else:
+        await update.message.reply_text(
+            "❌ Пожалуйста, отправьте файл в формате CSV.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("↩️ Попробовать снова", callback_data="admin_import")
+            ]])
+        )
+
+async def process_import(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: str) -> None:
+    """Process the import with the selected mode"""
+    # Get the file path from context
+    file_path = context.user_data.get('import_file_path')
+    if not file_path:
+        await update.callback_query.edit_message_text(
+            "❌ Ошибка: файл для импорта не найден. Пожалуйста, загрузите файл снова.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("↩️ Попробовать снова", callback_data="admin_import")
+            ]])
+        )
+        return
+    
+    # Update message to show progress
+    await update.callback_query.edit_message_text(
+        f"⏳ Импорт данных в режиме {mode}...\n\n"
+        "Этот процесс может занять некоторое время для больших файлов."
+    )
+    
+    try:
+        # Import the data
+        import_mode = "replace" if mode == "replace" else "append"
+        success, stats = db.import_whitelist_from_csv(file_path, import_mode)
+        
+        if success:
+            # Format result message
+            mode_text = "замены" if mode == "replace" else "добавления"
+            message_text = (
+                f"✅ Импорт в режиме {mode_text} завершен успешно!\n\n"
+                f"📊 *Статистика импорта:*\n"
+                f"• Обработано строк: {stats.get('processed', 0)}\n"
+                f"• Добавлено записей: {stats.get('added', 0)}\n"
+                f"• Пропущено (дубликаты): {stats.get('skipped', 0)}\n"
+                f"• Некорректных строк: {stats.get('invalid', 0)}\n\n"
+                f"Всего записей в базе: {db.get_whitelist_count()}"
+            )
+            
+            # Log event
+            db.log_event("import_complete", update.effective_user.id, {
+                "mode": import_mode,
+                "stats": stats
+            }, True)
+            
+            # Clean up the temporary file
+            import os
+            try:
+                os.remove(file_path)
+                logger.debug(f"Temporary file {file_path} deleted")
+            except Exception as e:
+                logger.warning(f"Could not delete temporary file {file_path}: {e}")
+            
+            # Clear the stored file path
+            if 'import_file_path' in context.user_data:
+                del context.user_data['import_file_path']
+            
+            # Add buttons for next steps
+            keyboard = [
+                [InlineKeyboardButton("📋 Просмотреть базу данных", callback_data="admin_list")],
+                [InlineKeyboardButton("📥 Импортировать еще", callback_data="admin_import")],
+                [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
+            ]
+            
+            # Send result message
+            await update.callback_query.edit_message_text(
+                message_text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+        else:
+            error_message = stats.get("error", "Неизвестная ошибка")
+            await update.callback_query.edit_message_text(
+                f"❌ Ошибка при импорте данных: {error_message}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("↩️ Попробовать снова", callback_data="admin_import")
+                ]])
+            )
+    except Exception as e:
+        logger.error(f"Error during import process: {e}")
+        await update.callback_query.edit_message_text(
+            f"❌ Ошибка при импорте данных: {str(e)}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("↩️ Попробовать снова", callback_data="admin_import")
+            ]])
+        )
 
 async def show_import_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show the import options menu"""
+    """Show the import menu with instructions"""
     user = update.effective_user
     
     # Only admins can import data
     if user.id not in ADMIN_IDS:
         if update.callback_query:
             await update.callback_query.answer("У вас нет прав для импорта данных.")
-            return
         else:
             await update.message.reply_text("⛔ У вас нет прав для импорта данных.")
-            return
+        return
     
-    # Create menu with import options
+    # Set the expected file flag
+    context.user_data['expecting_import_file'] = True
+    
     message_text = (
-        "*📥 Импорт данных в вайтлист*\n\n"
-        "Выберите режим импорта:\n\n"
-        "• *Добавить записи* - добавит новые записи из CSV файла, сохраняя существующие\n"
-        "• *Заменить все* - удалит все существующие записи и импортирует новые из CSV\n\n"
-        "📋 *Формат CSV файла:*\n"
-        "- Первая колонка: значение (обязательно)\n"
-        "- Вторая колонка: тип WL (опционально)\n"
-        "- Третья колонка: причина WL (опционально)\n\n"
-        "_После выбора режима отправьте CSV файл как документ._"
+        "*📥 Импорт данных в базу*\n\n"
+        "Отправьте CSV-файл с данными для импорта.\n\n"
+        "Формат файла:\n"
+        "• CSV с разделителями-запятыми\n"
+        "• Можно с заголовками или без\n"
+        "• Столбцы: value, wl_type, wl_reason\n"
+        "• Минимально необходим только столбец value\n\n"
+        "После загрузки файла вы сможете выбрать режим импорта:\n"
+        "• *Добавление* - добавит новые записи к существующим\n"
+        "• *Замена* - удалит все существующие записи и загрузит новые"
     )
     
-    # Create keyboard with options
-    keyboard = [
-        [InlineKeyboardButton("➕ Добавить записи", callback_data="import_add")],
-        [InlineKeyboardButton("🔄 Заменить все", callback_data="import_replace")],
-        [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
-    ]
-    
+    # Add cancel button
+    keyboard = [[InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Update or send message
-    await update_or_send_message(
-        update,
-        context,
-        message_text,
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-
-async def handle_import_mode_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle import mode selection (add or replace)"""
-    query = update.callback_query
-    callback_data = query.data
-    
-    # Parse import mode from callback data
-    replace_existing = callback_data == "import_replace"
-    
-    # Store the mode in user_data
-    context.user_data['import_mode'] = {
-        'replace_existing': replace_existing,
-        'waiting_for_file': True
-    }
-    
-    # Send instructions to user
-    mode_text = "замену всех существующих записей" if replace_existing else "добавление новых записей"
-    
-    await query.edit_message_text(
-        f"*📥 Импорт данных в вайтлист*\n\n"
-        f"Выбран режим: *{mode_text}*\n\n"
-        f"Пожалуйста, отправьте CSV файл как документ.\n\n"
-        f"📋 *Формат CSV файла:*\n"
-        f"- Первая колонка: значение (обязательно)\n"
-        f"- Вторая колонка: тип WL (опционально)\n"
-        f"- Третья колонка: причина WL (опционально)",
-        parse_mode='Markdown',
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Отменить импорт", callback_data="cancel_import")]
-        ])
-    )
-    
-    # Wait for file
-    return AWAITING_IMPORT_FILE
-
-async def handle_import_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Process the uploaded CSV file for import"""
-    user = update.effective_user
-    
-    # Check if we're waiting for import file
-    if not context.user_data.get('import_mode', {}).get('waiting_for_file', False):
-        return ConversationHandler.END
-    
-    # Check if a file was actually sent
-    if not update.message.document:
+    # Show message
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            message_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    else:
         await update.message.reply_text(
-            "❌ Пожалуйста, отправьте CSV файл как документ."
+            message_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
         )
-        return AWAITING_IMPORT_FILE
-    
-    # Check file extension
-    file = update.message.document
-    if not file.file_name.lower().endswith('.csv'):
-        await update.message.reply_text(
-            "❌ Пожалуйста, отправьте файл в формате CSV."
-        )
-        return AWAITING_IMPORT_FILE
-    
-    # Send progress message
-    progress_message = await update.message.reply_text(
-        "🔄 Загрузка файла и обработка данных...",
-        reply_markup=None
-    )
-    
-    try:
-        # Get import mode
-        replace_existing = context.user_data['import_mode'].get('replace_existing', False)
-        
-        # Download the file
-        new_file = await context.bot.get_file(file.file_id)
-        file_path = f"import_{user.id}_{file.file_name}"
-        await new_file.download_to_drive(file_path)
-        
-        # Update progress
-        await progress_message.edit_text("🔄 Файл загружен. Импортирую данные...")
-        
-        # Import from CSV
-        success, stats = db.import_whitelist_from_csv(file_path, replace_existing)
-        
-        # Clean up temp file
-        import os
-        try:
-            os.remove(file_path)
-        except Exception as e:
-            logger.warning(f"Could not remove temp file {file_path}: {e}")
-        
-        # Log the event
-        db.log_event("import_data", user.id, {
-            "filename": file.file_name,
-            "replace_existing": replace_existing,
-            "stats": stats
-        }, success)
-        
-        # Create result message
-        if success:
-            total = stats.get('total_processed', 0)
-            added = stats.get('added', 0)
-            skipped = stats.get('skipped', 0)
-            errors = stats.get('errors', 0)
-            
-            result_text = (
-                f"✅ *Импорт успешно завершен*\n\n"
-                f"📊 *Статистика импорта:*\n"
-                f"• Всего обработано строк: {total}\n"
-                f"• Добавлено записей: {added}\n"
-                f"• Пропущено дубликатов: {skipped}\n"
-                f"• Ошибок: {errors}\n\n"
-            )
-            
-            # Add error details if any
-            error_details = stats.get('error_details', [])
-            if errors > 0 and error_details:
-                # Limit to first 5 errors to avoid message too long
-                shown_errors = error_details[:5]
-                result_text += (
-                    f"❗ *Детали ошибок:*\n"
-                    f"{chr(10).join(['• ' + err for err in shown_errors])}\n"
-                )
-                if len(error_details) > 5:
-                    result_text += f"_...и еще {len(error_details) - 5} ошибок_\n\n"
-            
-            # Send result
-            keyboard = [
-                [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
-            ]
-            await progress_message.edit_text(
-                result_text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='Markdown'
-            )
-        else:
-            # Show error
-            await progress_message.edit_text(
-                f"❌ *Ошибка при импорте данных*\n\n"
-                f"Детали: {stats.get('error_details', ['Неизвестная ошибка'])[0]}",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
-                ]),
-                parse_mode='Markdown'
-            )
-    
-    except Exception as e:
-        logger.error(f"Error during import: {e}")
-        await progress_message.edit_text(
-            f"❌ Произошла ошибка при импорте: {str(e)}",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
-            ])
-        )
-    
-    # Clear import mode
-    if 'import_mode' in context.user_data:
-        del context.user_data['import_mode']
-    
-    return ConversationHandler.END
-
-async def cancel_import(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancel the import process"""
-    query = update.callback_query
-    
-    # Clear import mode
-    if 'import_mode' in context.user_data:
-        del context.user_data['import_mode']
-    
-    await query.edit_message_text(
-        "❌ Импорт отменен.",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")]
-        ])
-    )
-    
-    return ConversationHandler.END
-
-async def handle_admin_import(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle import button click in admin menu"""
-    await show_import_menu(update, context)
 
 def main() -> None:
     """Start the bot"""
@@ -1899,33 +1929,12 @@ def main() -> None:
     application.add_handler(CommandHandler("export", export_command))
     application.add_handler(CommandHandler("import", import_command))
     
-    # Add conversation states for import
-    AWAITING_IMPORT_FILE = 10  # Use a unique number
-
-    # Add conversation handler for importing
-    import_handler = ConversationHandler(
-        entry_points=[
-            CommandHandler("import", import_command),
-            CallbackQueryHandler(handle_import_mode_selection, pattern="^import_(add|replace)$")
-        ],
-        states={
-            AWAITING_IMPORT_FILE: [
-                MessageHandler(filters.Document.ALL, handle_import_file),
-                CallbackQueryHandler(cancel_import, pattern="^cancel_import$")
-            ]
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel_import),
-            CallbackQueryHandler(cancel_import, pattern="^cancel_import$")
-        ],
-        name="import_conversation",
-        persistent=False
-    )
-    application.add_handler(import_handler)
-    
     # Add conversation handler for check
     check_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("check", show_check_menu)],
+        entry_points=[
+            CommandHandler("check", show_check_menu),
+            CallbackQueryHandler(show_check_menu, pattern="^action_check$")
+        ],
         states={
             AWAITING_CHECK_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_check_value)]
         },
@@ -1936,7 +1945,7 @@ def main() -> None:
     )
     application.add_handler(check_conv_handler)
     
-    # Add conversation handler for add
+    # Add conversation handler for adding values
     add_conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("add", show_add_menu),
@@ -1947,21 +1956,19 @@ def main() -> None:
             AWAITING_WL_TYPE: [CallbackQueryHandler(handle_wl_type, pattern="^wl_type_")],
             AWAITING_WL_REASON: [CallbackQueryHandler(handle_wl_reason, pattern="^wl_reason_")]
         },
-        fallbacks=[
-            CallbackQueryHandler(button_callback, pattern="^menu_admin$"),
-            CallbackQueryHandler(button_callback, pattern="^back_to_main$"),
-            MessageHandler(filters.COMMAND, button_callback)
-        ],
+        fallbacks=[CallbackQueryHandler(button_callback)],
         name="add_conversation",
         persistent=False,
-        per_chat=True,
-        per_user=True
+        per_chat=True
     )
     application.add_handler(add_conv_handler)
     
-    # Add conversation handler for remove
+    # Add conversation handler for removing values
     remove_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("remove", show_remove_menu)],
+        entry_points=[
+            CommandHandler("remove", show_remove_menu),
+            CallbackQueryHandler(show_remove_menu, pattern="^admin_remove$")
+        ],
         states={
             AWAITING_REMOVE_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_value)]
         },
@@ -1972,30 +1979,34 @@ def main() -> None:
     )
     application.add_handler(remove_conv_handler)
     
-    # Add conversation handler for broadcast
+    # Add conversation handler for broadcasting messages
     broadcast_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("broadcast", broadcast_command)],
+        entry_points=[
+            CommandHandler("broadcast", broadcast_command),
+            CallbackQueryHandler(show_broadcast_menu, pattern="^admin_broadcast$")
+        ],
         states={
             BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message)]
         },
-        fallbacks=[CallbackQueryHandler(cancel_broadcast, pattern="^broadcast_cancel$")],
+        fallbacks=[CallbackQueryHandler(button_callback)],
         name="broadcast_conversation",
         persistent=False,
         per_chat=True
     )
     application.add_handler(broadcast_conv_handler)
     
-    # Add callback query handler - после ConversationHandler, но перед MessageHandler
+    # Add handler for document uploads (for import)
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_import_file))
+    
+    # Add callback query handler - перемещено после ConversationHandler, но перед MessageHandler
     application.add_handler(CallbackQueryHandler(button_callback))
     
-    # Add message handler - последним, чтобы перехватывать только те сообщения, которые не обработаны другими обработчиками
+    # Add message handler to catch all unhandled messages
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Start the Bot
-    logger.info("Starting bot...")
+    logger.info("Starting the bot...")
     application.run_polling()
-    
-    logger.info("Bot stopped")
 
 if __name__ == "__main__":
     main() 
