@@ -1,50 +1,19 @@
 import sqlite3
 import datetime
 from typing import List, Optional, Tuple, Dict, Any
-from contextlib import contextmanager
 
 class Database:
     def __init__(self, db_name: str = "mega_buddies.db"):
         self.db_name = db_name
         self._create_tables()
         self._migrate_database()
-        
-        # Cache initialization
-        self._cache = {}
-        self._cache_ttl = {}
-        self._cache_enabled = True
-
-    @contextmanager
-    def _get_connection(self):
-        """Context manager for database connections to ensure proper cleanup"""
-        conn = None
-        try:
-            conn = sqlite3.connect(self.db_name)
-            yield conn
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-                    
-    def _execute_query(self, query: str, params=(), fetch_one=False, fetch_all=False, commit=False):
-        """Execute a query with proper connection handling"""
-        result = None
-        
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(query, params)
-            
-            if fetch_one:
-                result = cursor.fetchone()
-            elif fetch_all:
-                result = cursor.fetchall()
-            elif commit:
-                conn.commit()
-                result = cursor.rowcount
-                
-        return result
+        # Кэш для часто запрашиваемых данных
+        self._cache = {
+            'whitelist': {},  # Кэш проверок вайтлиста
+            'stats': {}       # Кэш статистики
+        }
+        self._cache_ttl = 300  # Время жизни кэша в секундах (5 минут)
+        self._cache_timestamp = {}  # Время последнего обновления кэша
 
     def _create_tables(self):
         """Create necessary tables if they don't exist"""
@@ -85,16 +54,6 @@ class Database:
             FOREIGN KEY (user_id) REFERENCES users (user_id)
         )
         ''')
-        
-        # Create indexes for faster queries
-        # Index on whitelist value for faster lookups
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_whitelist_value ON whitelist(value)')
-        
-        # Index on event_type and timestamp for statistics queries
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_events_type_time ON events(event_type, timestamp)')
-        
-        # Index on users last_activity for active users queries
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_last_activity ON users(last_activity)')
         
         conn.commit()
         conn.close()
@@ -162,66 +121,75 @@ class Database:
         
         conn.close()
 
+    def _clear_cache(self, cache_key=None):
+        """Clear cache data"""
+        if cache_key:
+            self._cache[cache_key] = {}
+        else:
+            for key in self._cache:
+                self._cache[key] = {}
+
     def add_to_whitelist(self, value: str, wl_type: str = "FCFS", wl_reason: str = "Fluffy holder") -> bool:
         """Add a value to the whitelist with type and reason"""
         try:
-            conn = sqlite3.connect(self.db_name)
-            cursor = conn.cursor()
-            
-            # Проверяем, существует ли уже это значение
-            cursor.execute("SELECT id FROM whitelist WHERE value = ?", (value,))
-            if cursor.fetchone():
-                conn.close()
+            # Проверяем существование записи
+            check_query = "SELECT id FROM whitelist WHERE value = ?"
+            exists = self._execute_query(check_query, (value,), fetch_one=True)
+            if exists:
                 return False
                 
-            cursor.execute(
-                "INSERT INTO whitelist (value, wl_type, wl_reason) VALUES (?, ?, ?)", 
-                (value, wl_type, wl_reason)
-            )
-            conn.commit()
-            conn.close()
+            # Добавляем новую запись
+            insert_query = "INSERT INTO whitelist (value, wl_type, wl_reason) VALUES (?, ?, ?)"
+            self._execute_query(insert_query, (value, wl_type, wl_reason))
             
-            # Invalidate cache keys that might contain stale data after this change
-            self._invalidate_cache_key(f"whitelist_check_{value}")
-            self._invalidate_cache_key("whitelist_count")
+            # Очищаем кэш, так как данные изменились
+            self._clear_cache('whitelist')
             
             return True
         except Exception as e:
             print(f"Error adding to whitelist: {e}")
-            conn.close()
             return False
 
     def remove_from_whitelist(self, value: str) -> bool:
         """Remove a value from the whitelist"""
-        conn = sqlite3.connect(self.db_name)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM whitelist WHERE value = ?", (value,))
-        affected = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
+        try:
+            query = "DELETE FROM whitelist WHERE value = ?"
+            self._execute_query(query, (value,))
+            
+            # Очищаем кэш, так как данные изменились
+            self._clear_cache('whitelist')
+            
+            # В SQLite rowcount не всегда корректно работает при выполнении DELETE
+            # Проверяем, существует ли запись после удаления
+            check_query = "SELECT COUNT(*) FROM whitelist WHERE value = ?"
+            row = self._execute_query(check_query, (value,), fetch_one=True)
+            return row[0] == 0
+        except Exception as e:
+            print(f"Error removing from whitelist: {e}")
+            return False
+
+    def _is_cache_valid(self, cache_key):
+        """Check if cache is still valid"""
+        import time
+        current_time = time.time()
+        last_update = self._cache_timestamp.get(cache_key, 0)
+        return current_time - last_update < self._cache_ttl
         
-        # Invalidate cache keys that might contain stale data after this change
-        self._invalidate_cache_key(f"whitelist_check_{value}")
-        self._invalidate_cache_key("whitelist_count")
-        
-        return affected
+    def _update_cache_timestamp(self, cache_key):
+        """Update cache timestamp"""
+        import time
+        self._cache_timestamp[cache_key] = time.time()
 
     def check_whitelist(self, value: str) -> Dict[str, Any]:
         """Check if a value exists in the whitelist and return details"""
-        # Try to get from cache first
-        cache_key = f"whitelist_check_{value}"
-        cached_result = self._get_from_cache(cache_key)
-        if cached_result is not None:
-            # We still record the check event, but don't query DB again
-            self.log_event("check", None, {"value": value, "result": cached_result["found"], "cached": True}, cached_result["found"])
-            return cached_result
+        # Проверяем кэш сначала
+        cache_key = f"wl_{value}"
+        if cache_key in self._cache['whitelist'] and self._is_cache_valid('whitelist'):
+            return self._cache['whitelist'][cache_key]
         
-        # Not in cache, query the database
-        conn = sqlite3.connect(self.db_name)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, value, wl_type, wl_reason FROM whitelist WHERE value = ?", (value,))
-        row = cursor.fetchone()
-        conn.close()
+        # Если нет в кэше, проверяем в базе
+        query = "SELECT id, value, wl_type, wl_reason FROM whitelist WHERE value = ?"
+        row = self._execute_query(query, (value,), fetch_one=True)
         
         if row:
             result = {
@@ -234,52 +202,56 @@ class Database:
         else:
             result = {"found": False}
         
+        # Сохраняем в кэш
+        self._cache['whitelist'][cache_key] = result
+        self._update_cache_timestamp('whitelist')
+        
         # Record the check event
         self.log_event("check", None, {"value": value, "result": result["found"]}, result["found"])
-        
-        # Cache the result for 5 minutes
-        self._set_cache(cache_key, result, 300)
         
         return result
 
     def get_all_whitelist(self) -> List[Dict[str, Any]]:
         """Get all values in the whitelist with their details"""
-        conn = sqlite3.connect(self.db_name)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, value, wl_type, wl_reason FROM whitelist")
-        rows = cursor.fetchall()
-        conn.close()
+        # Используем кэш если он актуален
+        if 'all_items' in self._cache['whitelist'] and self._is_cache_valid('whitelist'):
+            return self._cache['whitelist']['all_items']
+        
+        query = "SELECT id, value, wl_type, wl_reason FROM whitelist"
+        rows = self._execute_query(query, fetch_all=True)
         
         result = []
-        for row in rows:
-            result.append({
-                "id": row[0],
-                "value": row[1],
-                "wl_type": row[2],
-                "wl_reason": row[3]
-            })
+        if rows:
+            for row in rows:
+                result.append({
+                    "id": row[0],
+                    "value": row[1],
+                    "wl_type": row[2],
+                    "wl_reason": row[3]
+                })
+        
+        # Сохраняем в кэш
+        self._cache['whitelist']['all_items'] = result
+        self._update_cache_timestamp('whitelist')
         
         return result
     
     def get_whitelist_count(self) -> int:
         """Get the count of items in the whitelist"""
-        # Try to get from cache first
-        cache_key = "whitelist_count"
-        cached_result = self._get_from_cache(cache_key)
-        if cached_result is not None:
-            return cached_result
+        # Используем кэш если он актуален
+        if 'count' in self._cache['whitelist'] and self._is_cache_valid('whitelist'):
+            return self._cache['whitelist']['count']
         
-        # Not in cache, query the database
-        conn = sqlite3.connect(self.db_name)
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM whitelist")
-        result = cursor.fetchone()[0]
-        conn.close()
+        query = "SELECT COUNT(*) FROM whitelist"
+        row = self._execute_query(query, fetch_one=True)
         
-        # Cache the result for 5 minutes
-        self._set_cache(cache_key, result, 300)
+        count = row[0] if row else 0
         
-        return result
+        # Сохраняем в кэш
+        self._cache['whitelist']['count'] = count
+        self._update_cache_timestamp('whitelist')
+        
+        return count
 
     def add_user(self, user_id: int, username: Optional[str], first_name: str, 
                  last_name: Optional[str], chat_id: int) -> bool:
@@ -493,47 +465,19 @@ class Database:
 
     def get_total_users(self) -> int:
         """Get the total number of users in the database"""
-        # Try to get from cache first
-        cache_key = "total_users"
-        cached_result = self._get_from_cache(cache_key)
-        if cached_result is not None:
-            return cached_result
-            
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM users")
         result = cursor.fetchone()[0]
         conn.close()
-        
-        # Cache the result for 5 minutes
-        self._set_cache(cache_key, result, 300)
-        
         return result
     
     def get_active_users(self, days: int = 7) -> int:
         """Get the number of active users in the last specified days"""
-        # Try to get from cache first
-        cache_key = f"active_users_{days}"
-        cached_result = self._get_from_cache(cache_key)
-        if cached_result is not None:
-            return cached_result
-            
-        # Not cached, query the database
-        result = self.get_active_users_count(days)
-        
-        # Cache the result for 5 minutes
-        self._set_cache(cache_key, result, 300)
-        
-        return result
+        return self.get_active_users_count(days)
     
     def get_checks_count(self, days: int = None) -> int:
         """Get the count of check operations, optionally filtered by time period"""
-        # Try to get from cache first
-        cache_key = f"checks_count_{days if days is not None else 'all'}"
-        cached_result = self._get_from_cache(cache_key)
-        if cached_result is not None:
-            return cached_result
-            
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
         
@@ -551,183 +495,47 @@ class Database:
             
         result = cursor.fetchone()[0]
         conn.close()
-        
-        # Cache the result - shorter time for recent checks (1 minute), longer for all-time (5 minutes)
-        cache_time = 60 if days is not None and days <= 1 else 300
-        self._set_cache(cache_key, result, cache_time)
-        
         return result
 
-    def import_whitelist_from_csv(self, file_path: str, mode: str = "append") -> tuple:
-        """Import whitelist data from a CSV file
-        
-        Args:
-            file_path: Path to the CSV file
-            mode: 'append' to add to existing data, 'replace' to replace all data
-            
-        Returns:
-            tuple: (success, stats) where stats is a dict with import statistics
-        """
+    def _get_connection(self):
+        """Get a connection to the database with proper settings"""
+        conn = sqlite3.connect(self.db_name)
+        # Включаем внешние ключи для обеспечения целостности данных
+        conn.execute("PRAGMA foreign_keys = ON")
+        # Оптимизация для повышения скорости
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA cache_size = 10000")
+        # Включаем автоматическую обработку транзакций
+        conn.isolation_level = None
+        return conn
+
+    def _execute_query(self, query, params=(), fetch_one=False, fetch_all=False, commit=True):
+        """Execute a query with proper error handling and connection management"""
+        result = None
         try:
-            import csv
+            conn = self._get_connection()
+            cursor = conn.cursor()
             
-            # Statistics to return
-            stats = {
-                "processed": 0,
-                "added": 0,
-                "skipped": 0,
-                "invalid": 0
-            }
-            
-            # If replacing, clear existing whitelist
-            if mode == "replace":
-                conn = sqlite3.connect(self.db_name)
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM whitelist")
-                conn.commit()
+            try:
+                cursor.execute("BEGIN")
+                cursor.execute(query, params)
+                
+                if fetch_one:
+                    result = cursor.fetchone()
+                elif fetch_all:
+                    result = cursor.fetchall()
+                    
+                if commit:
+                    cursor.execute("COMMIT")
+                    
+                return result
+            except Exception as e:
+                cursor.execute("ROLLBACK")
+                raise e
+            finally:
+                cursor.close()
                 conn.close()
-                print(f"Cleared existing whitelist for replacement import")
-            
-            # Read and process CSV file
-            with open(file_path, 'r', encoding='utf-8') as csvfile:
-                # Detect if file has headers
-                sample = csvfile.read(1024)
-                csvfile.seek(0)
-                has_header = csv.Sniffer().has_header(sample)
-                
-                # Setup CSV reader
-                reader = csv.reader(csvfile)
-                if has_header:
-                    # Skip header row
-                    next(reader)
-                
-                # Process each row
-                for row in reader:
-                    stats["processed"] += 1
-                    
-                    # Skip empty rows
-                    if not row or not any(row):
-                        stats["invalid"] += 1
-                        continue
-                    
-                    # Extract data based on row length
-                    if len(row) >= 4:
-                        # Full format: id, value, wl_type, wl_reason
-                        value = row[1].strip()
-                        wl_type = row[2].strip() if row[2].strip() else "FCFS"
-                        wl_reason = row[3].strip() if row[3].strip() else "Fluffy holder"
-                    elif len(row) == 3:
-                        # Format: value, wl_type, wl_reason
-                        value = row[0].strip()
-                        wl_type = row[1].strip() if row[1].strip() else "FCFS"
-                        wl_reason = row[2].strip() if row[2].strip() else "Fluffy holder"
-                    elif len(row) == 2:
-                        # Format: value, wl_type
-                        value = row[0].strip()
-                        wl_type = row[1].strip() if row[1].strip() else "FCFS" 
-                        wl_reason = "Fluffy holder"
-                    elif len(row) == 1:
-                        # Format: value only
-                        value = row[0].strip()
-                        wl_type = "FCFS"
-                        wl_reason = "Fluffy holder"
-                    else:
-                        # Should never reach here due to check above
-                        stats["invalid"] += 1
-                        continue
-                    
-                    # Skip if value is empty
-                    if not value:
-                        stats["invalid"] += 1
-                        continue
-                    
-                    # Try to add to whitelist
-                    success = self.add_to_whitelist(value, wl_type, wl_reason)
-                    if success:
-                        stats["added"] += 1
-                    else:
-                        stats["skipped"] += 1
-            
-            print(f"Import completed. Processed: {stats['processed']}, Added: {stats['added']}, "
-                  f"Skipped: {stats['skipped']}, Invalid: {stats['invalid']}")
-            return True, stats
-            
         except Exception as e:
-            print(f"Error importing whitelist from CSV: {e}")
-            return False, {"error": str(e)}
-
-    def export_whitelist_to_csv(self, filename: str = "whitelist_export.csv") -> tuple:
-        """Export whitelist data to a CSV file
-        
-        Args:
-            filename: The name of the CSV file to export to
-            
-        Returns:
-            tuple: (success, filename) where filename is path to the exported file
-        """
-        try:
-            import csv
-            from datetime import datetime
-            
-            # Get all whitelist entries
-            whitelist_data = self.get_all_whitelist()
-            
-            if not whitelist_data:
-                print("No data to export")
-                return False, None
-            
-            # Add timestamp to filename to avoid overwriting
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename_with_timestamp = f"{filename.split('.')[0]}_{timestamp}.csv"
-            
-            # Write data to CSV file
-            with open(filename_with_timestamp, 'w', newline='', encoding='utf-8') as csvfile:
-                fieldnames = ['id', 'value', 'wl_type', 'wl_reason']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                
-                writer.writeheader()
-                for entry in whitelist_data:
-                    writer.writerow(entry)
-            
-            print(f"Export successful: {filename_with_timestamp}")
-            return True, filename_with_timestamp
-        except Exception as e:
-            print(f"Error exporting whitelist to CSV: {e}")
-            return False, None
-
-    def _get_from_cache(self, key: str):
-        """Get a value from cache if it exists and is not expired"""
-        if not self._cache_enabled:
-            return None
-            
-        if key not in self._cache:
-            return None
-            
-        # Check if cache entry has expired
-        if key in self._cache_ttl and self._cache_ttl[key] < datetime.datetime.now():
-            # Cache expired
-            del self._cache[key]
-            del self._cache_ttl[key]
-            return None
-            
-        return self._cache[key]
-        
-    def _set_cache(self, key: str, value, ttl_seconds: int = 60):
-        """Store a value in cache with expiration time"""
-        if not self._cache_enabled:
-            return
-            
-        self._cache[key] = value
-        self._cache_ttl[key] = datetime.datetime.now() + datetime.timedelta(seconds=ttl_seconds)
-        
-    def _clear_cache(self):
-        """Clear all cached values"""
-        self._cache = {}
-        self._cache_ttl = {}
-        
-    def _invalidate_cache_key(self, key: str):
-        """Remove a specific key from cache"""
-        if key in self._cache:
-            del self._cache[key]
-        if key in self._cache_ttl:
-            del self._cache_ttl[key] 
+            print(f"Database error: {e}")
+            return None 

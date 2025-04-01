@@ -4,8 +4,9 @@ import asyncio
 import time
 import json
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Dict, Any, Optional, Union, Tuple, Set
+import functools
 
 from dotenv import load_dotenv
 from telegram import (
@@ -26,13 +27,9 @@ from telegram.ext import (
     ContextTypes,
     filters,
     PicklePersistence,
-    CallbackContext
+    Defaults,
+    AIORateLimiter
 )
-from telegram.error import (
-    TelegramError, Forbidden, BadRequest, NetworkError, TimedOut, ChatMigrated, RetryAfter
-)
-from telegram.constants import ChatType
-from telegram.helpers import escape_markdown
 
 from database import Database
 
@@ -68,6 +65,21 @@ ACTIVE_MESSAGE_KEY = 'active_message'  # Store (chat_id, message_id) for active 
 
 # Константа для хранения последнего сообщения бота
 BOT_ACTIVE_MESSAGE_KEY = 'active_bot_message'  # Ключ для хранения ID активного сообщения бота
+
+# Декоратор для измерения скорости выполнения функций
+def measure_time(func):
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = await func(*args, **kwargs)
+        execution_time = time.time() - start_time
+        
+        # Логируем только медленные операции (более 0.5 секунды)
+        if execution_time > 0.5:
+            logger.info(f"Performance: {func.__name__} took {execution_time:.2f} seconds")
+        
+        return result
+    return wrapper
 
 # Define command handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -227,6 +239,7 @@ async def show_check_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     return AWAITING_CHECK_VALUE
 
+@measure_time
 async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle checking a value in the whitelist"""
     user = update.effective_user
@@ -235,19 +248,19 @@ async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     logger.debug(f"Проверка значения в базе данных: '{value}' от пользователя {user.id}")
     
     try:
-    # Check the value against whitelist
-    result = db.check_whitelist(value)
-    
+        # Check the value against whitelist
+        result = db.check_whitelist(value)
+        
         # Log the check event
         db.log_event("check_whitelist", update.effective_user.id, {"value": value}, bool(result.get("found", False)))
         
         # Create reply markup with buttons for next actions
-    keyboard = [
-        [InlineKeyboardButton("🔄 Проверить другое значение", callback_data="action_check")],
-        [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
+        keyboard = [
+            [InlineKeyboardButton("🔄 Проверить другое значение", callback_data="action_check")],
+            [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         # Prepare response message
         if result.get("found", False):
             message_text = (
@@ -266,17 +279,17 @@ async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Try to delete the user's message for cleaner interface
         try:
             await update.message.delete()
-    except Exception as e:
+        except Exception as e:
             logger.warning(f"Не удалось удалить сообщение пользователя: {e}")
         
         # Send a new message with the result
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=message_text,
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-    
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+        
     except Exception as e:
         logger.error(f"Ошибка при проверке значения в базе данных: {e}")
         await update.message.reply_text(
@@ -1901,6 +1914,71 @@ async def show_import_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             parse_mode='Markdown'
         )
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle errors in the telegram bot"""
+    try:
+        if update and isinstance(update, Update) and update.effective_message:
+            # Only send error to chat if it's a known error for user input
+            if isinstance(context.error, (ValueError, KeyError, IndexError)):
+                await update.effective_message.reply_text(
+                    "⚠️ Произошла ошибка при обработке вашего запроса. "
+                    "Пожалуйста, проверьте ввод и попробуйте снова."
+                )
+            else:
+                # For any other errors, send generic message to user
+                await update.effective_message.reply_text(
+                    "🛑 Произошла внутренняя ошибка. Администраторы уведомлены. "
+                    "Пожалуйста, попробуйте позже или обратитесь к администратору."
+                )
+                
+                # Try to restore the conversation state if needed
+                if context.user_data.get('expecting_add') or \
+                   context.user_data.get('expecting_remove') or \
+                   context.user_data.get('expecting_check') or \
+                   context.user_data.get('expecting_broadcast') or \
+                   context.user_data.get('expecting_import_file'):
+                   
+                    # Reset all conversation flags
+                    context.user_data['expecting_add'] = False
+                    context.user_data['expecting_remove'] = False
+                    context.user_data['expecting_check'] = False
+                    context.user_data['expecting_broadcast'] = False
+                    context.user_data['expecting_import_file'] = False
+                    
+                    # Clean up any temporary files
+                    if 'import_file_path' in context.user_data:
+                        import os
+                        try:
+                            os.remove(context.user_data['import_file_path'])
+                        except:
+                            pass
+                        del context.user_data['import_file_path']
+                    
+                    logger.warning("Reset conversation state due to error")
+                
+        # Log the error
+        logger.error(f"Update {update} caused error {context.error}", exc_info=context.error)
+        
+        # Notify admins about critical errors
+        if isinstance(context.error, Exception) and not isinstance(context.error, (ValueError, KeyError, IndexError)):
+            for admin_id in ADMIN_IDS:
+                try:
+                    error_message = (
+                        f"🔴 *Критическая ошибка в боте:*\n\n"
+                        f"```\n{str(context.error)[:200]}...\n```"
+                    )
+                    
+                    await context.bot.send_message(
+                        chat_id=admin_id,
+                        text=error_message,
+                        parse_mode='Markdown'
+                    )
+                except:
+                    logger.error(f"Failed to notify admin {admin_id} about error")
+    except Exception as e:
+        # If even the error handler fails, just log it
+        logger.critical(f"Error handler failed with {e}", exc_info=e)
+
 def main() -> None:
     """Start the bot"""
     # Get the bot token from environment variables
@@ -1919,8 +1997,34 @@ def main() -> None:
         logger.error(f"Error initializing database: {e}")
         return
     
-    # Create the Application
-    application = Application.builder().token(token).build()
+    # Set higher persistence and stability options
+    defaults = Defaults(
+        parse_mode='Markdown',
+        disable_web_page_preview=True,
+        timeout=60,  # Увеличенный таймаут для операций
+        allow_sending_without_reply=True,
+        block=False  # Асинхронная отправка сообщений
+    )
+    
+    # Rate limiting - prevent abuse and server overload
+    rate_limiter = AIORateLimiter(
+        max_retries=3,  # Максимальное количество повторных попыток
+        group_bucket_size=20,  # Количество запросов на группу
+        overall_bucket_size=30  # Общее количество запросов
+    )
+    
+    # Create the Application with improved reliability settings
+    application = (
+        Application.builder()
+        .token(token)
+        .defaults(defaults)
+        .rate_limiter(rate_limiter)
+        .concurrent_updates(True)  # Включаем обработку нескольких обновлений одновременно
+        .build()
+    )
+    
+    # Register error handler
+    application.add_error_handler(error_handler)
     
     # Setup bot commands and description on startup
     application.post_init = setup_commands
@@ -2004,143 +2108,15 @@ def main() -> None:
     # Add handler for document uploads (for import)
     application.add_handler(MessageHandler(filters.Document.ALL, handle_import_file))
     
-    # Add callback query handler
+    # Add callback query handler - перемещено после ConversationHandler, но перед MessageHandler
     application.add_handler(CallbackQueryHandler(button_callback))
     
     # Add message handler to catch all unhandled messages
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # Регистрируем обработчик ошибок
-    application.add_error_handler(error_handler)
-    
-    # Добавляем регулярную проверку работоспособности бота
-    job_queue = application.job_queue
-    # Проверка каждый час
-    job_queue.run_repeating(health_check, interval=3600, first=300)
-    # Очистка кэша каждые 12 часов
-    job_queue.run_repeating(
-        lambda context: db._clear_cache() if db and hasattr(db, '_clear_cache') else None, 
-        interval=43200, 
-        first=600
-    )
-    
     # Start the Bot
     logger.info("Starting the bot...")
-    try:
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
-    except Exception as e:
-        logger.critical(f"Bot crashed: {e}", exc_info=True)
-        # Можно добавить код для уведомления администраторов
-    finally:
-        logger.info("Bot stopped")
-
-# Функция для обработки критических ошибок
-def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Логирует ошибки и отправляет сообщение администратору при критических сбоях"""
-    error = context.error
-    
-    # Сначала логируем ошибку
-    logger.error(f"Exception while handling an update: {error}", exc_info=context.error)
-    
-    # Обрабатываем разные типы ошибок
-    if isinstance(error, TimedOut):
-        logger.warning(f"Telegram server timed out: {error}")
-        # Тайм-ауты обычно временные, просто логируем
-    elif isinstance(error, NetworkError):
-        logger.warning(f"Network error: {error}")
-        # Ошибки сети обычно временные, просто логируем
-    elif isinstance(error, ChatMigrated):
-        logger.info(f"Chat migrated to chat_id: {error.new_chat_id}")
-        # Можно обновить ID чата в базе данных
-    elif isinstance(error, RetryAfter):
-        logger.warning(f"Rate limit exceeded. Retry after {error.retry_after} seconds")
-        # Здесь можно добавить задержку для избежания блокировки
-    elif isinstance(error, BadRequest):
-        logger.warning(f"Bad request: {error}")
-    elif isinstance(error, Forbidden):
-        logger.warning(f"Forbidden action: {error}")
-    elif isinstance(error, (sqlite3.Error, sqlite3.Warning, sqlite3.OperationalError)):
-        logger.error(f"Database error: {error}")
-        # Для ошибок базы данных можно добавить попытку восстановления
-        try:
-            global db
-            logger.info("Attempting to reconnect to database...")
-            db = Database()
-            logger.info("Database reconnected successfully")
-        except Exception as e:
-            logger.error(f"Failed to reconnect to database: {e}")
-    else:
-        # Для других критических ошибок отправляем сообщение администратору
-        try:
-            error_message = f"❌ *Критическая ошибка*\n\n`{type(error).__name__}: {error}`"
-            
-            # Получаем информацию об апдейте
-            update_info = ""
-            if update and isinstance(update, Update):
-                if update.effective_chat:
-                    update_info += f"\nChat ID: {update.effective_chat.id}"
-                if update.effective_user:
-                    update_info += f"\nUser: {update.effective_user.first_name} (ID: {update.effective_user.id})"
-                if update.effective_message:
-                    update_info += f"\nMessage: {update.effective_message.text[:50]}"
-            
-            # Отправляем сообщение администратору с трейсбэком
-            for admin_id in ADMIN_IDS:
-                try:
-                    context.application.bot.send_message(
-                        chat_id=admin_id,
-                        text=error_message + (f"\n\n*Update Info:*\n`{update_info}`" if update_info else ""),
-                        parse_mode='Markdown'
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to send error message to admin {admin_id}: {e}")
-                    
-        except Exception as e:
-            logger.error(f"Failed to handle error notification: {e}")
-
-# Функция для проверки работоспособности бота
-def health_check(context: CallbackContext) -> None:
-    """Регулярно проверяет работоспособность бота и базы данных"""
-    logger.info("Performing health check...")
-    
-    try:
-        # Проверяем подключение к базе данных
-        global db
-        if db is None:
-            logger.error("Database is not initialized")
-            db = Database()
-            logger.info("Database reinitialized")
-        else:
-            # Простой запрос для проверки работоспособности БД
-            try:
-                count = db.get_total_users()
-                logger.info(f"Database health check passed. Total users: {count}")
-            except Exception as e:
-                logger.error(f"Database health check failed: {e}")
-                db = Database()
-                logger.info("Database reinitialized after failure")
-        
-        # Проверка целостности кэша
-        if hasattr(db, '_cache'):
-            # Очищаем устаревшие записи кэша
-            current_time = datetime.now()
-            expired_keys = [key for key, expiry in db._cache_ttl.items() if expiry < current_time]
-            for key in expired_keys:
-                db._invalidate_cache_key(key)
-            logger.info(f"Cache cleanup performed. Removed {len(expired_keys)} expired entries")
-            
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        # Отправляем уведомление администраторам
-        for admin_id in ADMIN_IDS:
-            try:
-                context.bot.send_message(
-                    chat_id=admin_id,
-                    text=f"⚠️ *Предупреждение*\n\nПроверка работоспособности не удалась: `{str(e)}`",
-                    parse_mode='Markdown'
-                )
-            except Exception as ex:
-                logger.error(f"Failed to send health check failure notification: {ex}")
+    application.run_polling()
 
 if __name__ == "__main__":
     main() 
