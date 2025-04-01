@@ -191,19 +191,32 @@ async def show_check_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
+    message_text = "Введите значение для проверки в базе данных:"
+    
     if update.callback_query:
-        await update.callback_query.edit_message_text(
-            "Введите значение для проверки в базе данных:",
+        # Когда нажата кнопка "Проверить ещё", отправляем новое сообщение
+        # вместо редактирования текущего
+        query = update.callback_query
+        await query.answer()
+        
+        # Отправляем новое сообщение
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=message_text,
             reply_markup=reply_markup
         )
     else:
         await update.message.reply_text(
-            "Введите значение для проверки в базе данных:",
+            message_text,
             reply_markup=reply_markup
         )
     
     # Устанавливаем флаг, чтобы знать, что следующее сообщение - для проверки
     context.user_data['expecting_check'] = True
+    
+    # Очищаем активное сообщение, чтобы не редактировать его
+    if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
+        del context.chat_data[BOT_ACTIVE_MESSAGE_KEY]
     
     return AWAITING_CHECK_VALUE
 
@@ -248,14 +261,20 @@ async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         logger.debug(f"Could not delete user message: {e}")
     
-    # Update or send the response message
-    await update_or_send_message(
-        update, 
-        context,
-        message_text,
+    # Всегда отправляем новое сообщение с результатом проверки,
+    # вместо обновления старого сообщения
+    chat_id = update.effective_chat.id
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=message_text,
         reply_markup=reply_markup,
         parse_mode='Markdown'
     )
+    
+    # Очищаем активное сообщение, чтобы следующая проверка
+    # не пыталась его обновить
+    if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
+        del context.chat_data[BOT_ACTIVE_MESSAGE_KEY]
     
     return ConversationHandler.END
 
@@ -1332,14 +1351,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except Exception as e:
             logger.debug(f"Could not delete user message: {e}")
         
-        # Send the response
-        await update_or_send_message(
-            update,
-            context,
-            message_text,
+        # Всегда отправляем новое сообщение с результатом
+        chat_id = update.effective_chat.id
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=message_text,
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
+        
+        # Очищаем активное сообщение
+        if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
+            del context.chat_data[BOT_ACTIVE_MESSAGE_KEY]
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle button callbacks from inline keyboards"""
@@ -1364,6 +1387,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     # Main menu actions
     if data == "action_check":
+        # При нажатии на кнопку "Проверить ещё" переходим в меню проверки
+        logger.debug("Нажата кнопка 'Проверить ещё'")
         await show_check_menu(update, context)
     elif data == "action_help":
         await show_help_menu(update, context)
