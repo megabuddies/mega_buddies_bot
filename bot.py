@@ -405,7 +405,14 @@ async def show_add_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     if update.callback_query:
         await update.callback_query.edit_message_text(
-            "Введите значение для добавления в вайтлист:",
+            "⌨️ Введите значение для добавления в базу данных.\n\n"
+            "❗️ Важно: следующее сообщение будет добавлено в базу данных.",
+            reply_markup=reply_markup
+        )
+    else:
+        await update.message.reply_text(
+            "⌨️ Введите значение для добавления в базу данных.\n\n"
+            "❗️ Важно: следующее сообщение будет добавлено в базу данных.",
             reply_markup=reply_markup
         )
     
@@ -418,35 +425,59 @@ async def handle_add_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """Process adding a value to whitelist"""
     value = update.message.text.strip()
     
-    # Add to whitelist
-    success = db.add_to_whitelist(value)
+    # Добавляем логирование
+    logger.debug(f"Добавление значения в базу данных: '{value}'")
     
-    # Log event
-    db.log_event("add_whitelist", update.effective_user.id, {"value": value}, success)
-    
-    # Create response message
-    if success:
-        message_text = f"✅ Значение \"{value}\" успешно добавлено в вайтлист!"
-    else:
-        message_text = f"⚠️ Значение \"{value}\" уже существует в вайтлисте."
-    
-    # Buttons for next action
-    keyboard = [
-        [InlineKeyboardButton("➕ Добавить еще", callback_data="admin_add")],
-        [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # Use delete_and_update_message instead
-    await delete_and_update_message(
-        update,
-        context,
-        message_text,
-        reply_markup=reply_markup
-    )
-    
-    return ConversationHandler.END
+    try:
+        # Add to whitelist
+        success = db.add_to_whitelist(value)
+        
+        # Log event
+        db.log_event("add_whitelist", update.effective_user.id, {"value": value}, success)
+        
+        # Create response message
+        if success:
+            logger.debug(f"Значение '{value}' успешно добавлено в базу данных")
+            message_text = f"✅ Значение \"{value}\" успешно добавлено в вайтлист!"
+        else:
+            logger.debug(f"Значение '{value}' уже существует в базе данных")
+            message_text = f"⚠️ Значение \"{value}\" уже существует в вайтлисте."
+        
+        # Buttons for next action
+        keyboard = [
+            [InlineKeyboardButton("➕ Добавить еще", callback_data="admin_add")],
+            [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Use delete_and_update_message instead
+        await delete_and_update_message(
+            update,
+            context,
+            message_text,
+            reply_markup=reply_markup
+        )
+        
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"Ошибка при добавлении значения в базу данных: {e}")
+        message_text = f"❌ Произошла ошибка при добавлении значения \"{value}\" в базу данных."
+        
+        keyboard = [
+            [InlineKeyboardButton("↩️ Попробовать снова", callback_data="admin_add")],
+            [InlineKeyboardButton("◀️ Назад к админ-панели", callback_data="menu_admin")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await delete_and_update_message(
+            update,
+            context,
+            message_text,
+            reply_markup=reply_markup
+        )
+        
+        return ConversationHandler.END
 
 async def show_remove_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show menu for removing a value from whitelist"""
@@ -1057,6 +1088,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     text = update.message.text.strip()
     
+    # Добавляем логирование для диагностики
+    user_id = update.effective_user.id
+    logger.debug(f"Получено сообщение от пользователя {user_id}: '{text}'")
+    logger.debug(f"Текущие флаги пользователя: expecting_check={context.user_data.get('expecting_check')}, expecting_add={context.user_data.get('expecting_add')}, expecting_remove={context.user_data.get('expecting_remove')}")
+    
     # Handle button presses from persistent keyboard - simplified
     if text == "🔍 Проверить":
         await show_check_menu(update, context)
@@ -1068,26 +1104,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await show_admin_menu(update, context)
         return
     
-    # Handle conversation states
-    if context.user_data.get('expecting_check'):
-        context.user_data['expecting_check'] = False
-        await handle_check_value(update, context)
-        return
-    elif context.user_data.get('expecting_add'):
+    # Handle conversation states with явным приоритетом для добавления и удаления
+    if context.user_data.get('expecting_add'):
+        logger.debug(f"Обработка сообщения для добавления в базу данных: '{text}'")
         context.user_data['expecting_add'] = False
         await handle_add_value(update, context)
-        return
+        return  # Добавлен явный return, чтобы избежать проверки whitelist
     elif context.user_data.get('expecting_remove'):
+        logger.debug(f"Обработка сообщения для удаления из базы данных: '{text}'")
         context.user_data['expecting_remove'] = False
         await handle_remove_value(update, context)
-        return
+        return  # Добавлен явный return, чтобы избежать проверки whitelist
+    elif context.user_data.get('expecting_check'):
+        logger.debug(f"Обработка сообщения для проверки в базе данных: '{text}'")
+        context.user_data['expecting_check'] = False
+        await handle_check_value(update, context)
+        return  # Добавлен явный return, чтобы избежать проверки whitelist
     elif context.user_data.get('expecting_broadcast'):
+        logger.debug(f"Обработка сообщения для рассылки: '{text}'")
         context.user_data['expecting_broadcast'] = False
         await start_broadcast_process(update, context)
-        return
+        return  # Добавлен явный return, чтобы избежать проверки whitelist
     else:
         # Normal message handling - check whitelist
         # Treat any text as a check query for simplicity
+        logger.debug(f"Обработка обычного сообщения как проверки в базе данных: '{text}'")
         
         # Check the value against whitelist
         value = text
@@ -1151,8 +1192,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await show_main_menu(update, context)
     # Admin actions
     elif data == "admin_add":
+        # Явно устанавливаем флаг ожидания добавления значения
+        context.user_data['expecting_add'] = True
         await show_add_menu(update, context)
     elif data == "admin_remove":
+        # Явно устанавливаем флаг ожидания удаления значения
+        context.user_data['expecting_remove'] = True
         await show_remove_menu(update, context)
     elif data == "admin_list":
         await show_list_menu(update, context)
@@ -1272,7 +1317,10 @@ def main() -> None:
     # Add callback query handler
     application.add_handler(CallbackQueryHandler(button_callback))
     
-    # Add message handler
+    # Add command handler for menu command
+    application.add_handler(CommandHandler("menu", show_main_menu))
+    
+    # Add message handler - переместил в самый конец, после всех других обработчиков
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Set up the menu commands
@@ -1310,9 +1358,6 @@ def main() -> None:
     
     # Run the setup_commands function on startup
     application.post_init = setup_commands
-    
-    # Add command handler for menu command
-    application.add_handler(CommandHandler("menu", show_main_menu))
     
     # Start the Bot
     logger.info("Starting bot...")
