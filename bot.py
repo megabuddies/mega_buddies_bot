@@ -2196,26 +2196,17 @@ def main() -> None:
     # Set higher persistence and stability options
     defaults = Defaults(
         parse_mode='Markdown',
-        disable_web_page_preview=True,
+        link_preview_options=False,  # Использую актуальный параметр вместо disable_web_page_preview
         allow_sending_without_reply=True,
         block=False  # Асинхронная отправка сообщений
     )
-
-    # Rate limiting - prevent abuse and server overload
-    rate_limiter = AIORateLimiter(
-        max_retries=3,  # Максимальное количество повторных попыток
-        group_bucket_size=20,  # Количество запросов на группу
-        overall_bucket_size=30  # Общее количество запросов
-    )
-
-    # Create the Application with improved reliability settings
+    
+    # Создаем приложение без использования rate_limiter с проблемными параметрами
     application = (
         Application.builder()
         .token(token)
         .defaults(defaults)
-        .rate_limiter(rate_limiter)
-        # Включаем обработку нескольких обновлений одновременно
-        .concurrent_updates(True)
+        .concurrent_updates(True)  # Включаем обработку нескольких обновлений одновременно
         .build()
     )
 
