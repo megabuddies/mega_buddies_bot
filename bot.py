@@ -645,7 +645,7 @@ async def handle_wl_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if 'add_data' in context.user_data:
             del context.user_data['add_data']
             logger.debug("Данные add_data очищены из контекста пользователя после ошибки")
-        
+    
     return ConversationHandler.END
 
 async def show_remove_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
