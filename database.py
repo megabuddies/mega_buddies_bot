@@ -481,4 +481,111 @@ class Database:
             return True, filename_with_timestamp
         except Exception as e:
             print(f"Error exporting whitelist to CSV: {e}")
-            return False, None 
+            return False, None
+
+    def import_whitelist_from_csv(self, filepath: str, mode: str = "append") -> tuple:
+        """Import whitelist data from a CSV file
+        
+        Args:
+            filepath: Path to CSV file to import
+            mode: 'append' to add to existing data, 'replace' to replace all data
+            
+        Returns:
+            tuple: (success, stats) where stats is a dict with import statistics
+        """
+        try:
+            import csv
+            import os
+            
+            if not os.path.exists(filepath):
+                return False, {"error": f"Файл {filepath} не найден"}
+            
+            # Stats to return
+            stats = {
+                "total_processed": 0,
+                "added": 0,
+                "skipped": 0,
+                "errors": 0,
+                "deleted": 0
+            }
+            
+            # If mode is replace, clear the whitelist table first
+            if mode == "replace":
+                conn = sqlite3.connect(self.db_name)
+                cursor = conn.cursor()
+                
+                # Count existing records
+                cursor.execute("SELECT COUNT(*) FROM whitelist")
+                stats["deleted"] = cursor.fetchone()[0]
+                
+                # Delete all records
+                cursor.execute("DELETE FROM whitelist")
+                conn.commit()
+                conn.close()
+            
+            # Read CSV file
+            with open(filepath, 'r', encoding='utf-8') as csvfile:
+                # Try to determine if file has headers
+                sample = csvfile.read(2048)
+                csvfile.seek(0)  # Reset file pointer
+                
+                has_header = csv.Sniffer().has_header(sample)
+                reader = csv.reader(csvfile)
+                
+                if has_header:
+                    # Skip header row
+                    next(reader)
+                
+                conn = sqlite3.connect(self.db_name)
+                cursor = conn.cursor()
+                
+                # Process each row
+                for row in reader:
+                    stats["total_processed"] += 1
+                    
+                    try:
+                        # Check if we have enough columns
+                        if len(row) >= 1:
+                            value = row[0].strip()
+                            
+                            # Set defaults for optional columns
+                            wl_type = "FCFS"
+                            wl_reason = "Imported from CSV"
+                            
+                            # If more columns exist, use them
+                            if len(row) >= 2 and row[1].strip():
+                                wl_type = row[1].strip()
+                            if len(row) >= 3 and row[2].strip():
+                                wl_reason = row[2].strip()
+                            
+                            # Skip empty values
+                            if not value:
+                                stats["skipped"] += 1
+                                continue
+                            
+                            # Check if value already exists (only relevant for append mode)
+                            if mode == "append":
+                                cursor.execute("SELECT id FROM whitelist WHERE value = ?", (value,))
+                                if cursor.fetchone():
+                                    stats["skipped"] += 1
+                                    continue
+                            
+                            # Insert the value
+                            cursor.execute(
+                                "INSERT INTO whitelist (value, wl_type, wl_reason) VALUES (?, ?, ?)",
+                                (value, wl_type, wl_reason)
+                            )
+                            stats["added"] += 1
+                        else:
+                            stats["skipped"] += 1
+                    except Exception as e:
+                        print(f"Error processing row: {row} - {e}")
+                        stats["errors"] += 1
+                
+                conn.commit()
+                conn.close()
+            
+            return True, stats
+        except Exception as e:
+            print(f"Error importing whitelist from CSV: {e}")
+            return False, {"error": str(e)} 
