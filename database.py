@@ -408,4 +408,38 @@ class Database:
             return activity_by_day
         except Exception as e:
             print(f"Error getting daily activity: {e}")
-            return {} 
+            return {}
+
+    def get_total_users(self) -> int:
+        """Get the total number of users in the database"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM users")
+        result = cursor.fetchone()[0]
+        conn.close()
+        return result
+    
+    def get_active_users(self, days: int = 7) -> int:
+        """Get the number of active users in the last specified days"""
+        return self.get_active_users_count(days)
+    
+    def get_checks_count(self, days: int = None) -> int:
+        """Get the count of check operations, optionally filtered by time period"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        
+        if days is not None:
+            # Get checks for the last N days
+            cursor.execute("""
+                SELECT COUNT(*) 
+                FROM events 
+                WHERE event_type = 'check' 
+                AND timestamp >= datetime('now', ?)
+            """, (f'-{days} days',))
+        else:
+            # Get all checks
+            cursor.execute("SELECT COUNT(*) FROM events WHERE event_type = 'check'")
+            
+        result = cursor.fetchone()[0]
+        conn.close()
+        return result 
