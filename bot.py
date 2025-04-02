@@ -1436,792 +1436,6 @@ async def show_persistent_keyboard(
 
     # Add function to delete user message and update or send
     # message
-
-
-    async def handle_message(
-            update: Update,
-            context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handler for all messages"""
-        # Update user's last activity timestamp
-        db.update_user_activity(update.effective_user.id)
-        
-        text = update.message.text.strip()
-        
-        # Добавляем логирование для диагностики
-        user_id = update.effective_user.id
-        logger.debug(f"Получено сообщение от пользователя {user_id}: '{text}'")
-
-        # Handle messages based on expected input
-        if context.user_data.get('expecting_add'):
-            logger.debug(f"Обработка сообщения для добавления в базу данных: '{text}'")
-            context.user_data['expecting_add'] = False
-            await handle_add_value(update, context)
-            return  # Добавлен явный return, чтобы избежать проверки whitelist
-        elif context.user_data.get('expecting_remove'):
-            logger.debug(f"Обработка сообщения для удаления из базы данных: '{text}'")
-            context.user_data['expecting_remove'] = False
-            await handle_remove_value(update, context)
-            return  # Добавлен явный return, чтобы избежать проверки whitelist
-        elif context.user_data.get('expecting_check'):
-            logger.debug(f"Обработка сообщения для проверки в базе данных: '{text}'")
-            context.user_data['expecting_check'] = False
-            await handle_check_value(update, context)
-            return  # Добавлен явный return, чтобы избежать проверки whitelist
-        elif context.user_data.get('expecting_broadcast'):
-            logger.debug(f"Обработка сообщения для рассылки: '{text}'")
-            context.user_data['expecting_broadcast'] = False
-            await start_broadcast_process(update, context)
-            return  # Добавлен явный return, чтобы избежать проверки whitelist
-        elif context.user_data.get('expecting_contribute'):
-            logger.debug(f"Обработка сообщения для вклада: '{text}'")
-            context.user_data['expecting_contribute'] = False
-            await handle_contribute_value(update, context)
-            return  # Добавлен явный return, чтобы избежать проверки whitelist
-        elif 'conversation_state' in context.user_data:
-            state = context.user_data['conversation_state']
-            if state == AWAITING_CONTRIBUTE_LINK:
-                await handle_contribution_link(update, context)
-                return
-            elif state == AWAITING_CONTRIBUTE_DESCRIPTION:
-                await handle_contribution_description(update, context)
-                # Clear the state after handling
-                del context.user_data['conversation_state']
-                return
-        
-        # Normal message handling - check whitelist
-        # Treat any text as a check query for simplicity
-        logger.debug(f"Обработка обычного сообщения как проверки в базе данных: '{text}'")
-        
-        try:
-            # Check the value against whitelist
-            value = text
-            result = db.check_whitelist(value)
-            user = update.effective_user
-            
-            # Create beautiful response
-            if result.get("found", False):
-                message_text = (
-                    f"*✅ Результат проверки*\n\n"
-                    f"Привет, {user.first_name}! 👋\n\n"
-                    f"Значение `{value}` *найдено* в базе данных!\n\n"
-                    f"У вас {result.get('wl_type', 'Не указан')} WL потому что вы {result.get('wl_reason', 'Не указана')}! 🎉"
-                )
-            else:
-                message_text = (
-                    f"*❌ Результат проверки*\n\n"
-                    f"Нам жаль, {user.first_name}, но введенного значения пока нет в BuddyWL.\n\n"
-                    f"Мы с нетерпением ждем твой вклад и надеемся скоро увидеть тебя уже вместе с твоим Buddy! 💫"
-                )
-            
-            # Buttons for next action
-            keyboard = [
-                [InlineKeyboardButton("🔄 Проверить другое значение", callback_data="action_check")],
-                [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            # Try to delete the user message for cleaner interface
-            try:
-                await context.bot.delete_message(
-                    chat_id=update.message.chat_id,
-                    message_id=update.message.message_id
-                )
-            except Exception as e:
-                logger.debug(f"Could not delete user message: {e}")
-            
-            # Всегда отправляем новое сообщение с результатом
-            chat_id = update.effective_chat.id
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=message_text,
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
-            )
-            
-        except Exception as e:
-            logger.error(f"Ошибка при проверке значения в базе данных: {e}")
-            await update.message.reply_text(
-                "⚠️ Произошла ошибка при проверке. Пожалуйста, попробуйте еще раз или обратитесь к администратору.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
-                ]])
-            )
-        
-        # Очищаем активное сообщение
-        if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
-            del context.chat_data[BOT_ACTIVE_MESSAGE_KEY]
-
-
-    async def button_callback(
-            update: Update,
-            context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle button callbacks"""
-        query = update.callback_query
-        callback_data = query.data
-
-        logger.debug(f"Callback query received: {callback_data}")
-
-        # Update user's last activity
-        db.update_user_activity(update.effective_user.id)
-
-        # Log the button click
-        db.log_event("button_click", update.effective_user.id, {"button": callback_data})
-
-        # Main menu and navigation
-        if callback_data == "back_to_main":
-            await show_main_menu(update, context)
-        elif callback_data == "action_check":
-            logger.debug(f"User {update.effective_user.id} pressed Check button")
-            await show_check_menu(update, context)
-        elif callback_data == "action_stats":
-            logger.debug(f"User {update.effective_user.id} pressed Stats button")
-            await show_stats_menu(update, context)
-        elif callback_data == "action_links":
-            logger.debug(f"User {update.effective_user.id} pressed Links button")
-            await show_links_menu(update, context)
-        elif callback_data == "action_admin":
-            logger.debug(f"User {update.effective_user.id} pressed Admin button")
-            await show_admin_menu(update, context)
-        # Admin functions
-        elif callback_data == "menu_admin":
-            await show_admin_menu(update, context)
-        elif callback_data == "admin_add":
-            # Явно устанавливаем флаг ожидания добавления значения
-            context.user_data['expecting_add'] = True
-            await show_add_menu(update, context)
-        elif callback_data == "admin_remove":
-            # Явно устанавливаем флаг ожидания удаления значения
-            context.user_data['expecting_remove'] = True
-            await show_remove_menu(update, context)
-        elif callback_data == "admin_list":
-            await show_list_menu(update, context)
-        elif callback_data == "admin_broadcast":
-            await show_broadcast_menu(update, context)
-        elif callback_data == "admin_export":
-            await handle_export_button(update, context)
-        elif callback_data == "admin_import":
-            await show_import_menu(update, context)
-        # Whitelist pagination
-        elif callback_data == "prev_page":
-            await handle_whitelist_pagination(update, context, -1)
-        elif callback_data == "next_page":
-            await handle_whitelist_pagination(update, context, 1)
-        # Remove from whitelist with confirmation
-        elif callback_data.startswith("remove_"):
-            # Extract the value to remove
-            value_to_remove = callback_data[7:]  # Remove "remove_" prefix
-            success = db.remove_from_whitelist(value_to_remove)
-
-            # Create response message with buttons
-            if success:
-                message_text = f"Значение '{value_to_remove}' успешно удалено из вайтлиста."
-            else:
-                message_text = f"Не удалось удалить значение '{value_to_remove}' из вайтлиста."
-
-            # Add a button to go back to admin menu
-            keyboard = [[InlineKeyboardButton(
-                "◀️ Назад к админ-панели", callback_data="menu_admin")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            # Use delete_and_update_message instead of direct edit
-            await query.edit_message_text(
-                message_text,
-                reply_markup=reply_markup
-            )
-        # Import modes
-        elif callback_data == "import_replace":
-            await process_import(update, context, "replace")
-        elif callback_data == "import_append":
-            await process_import(update, context, "append")
-        # Broadcast
-        elif callback_data == "start_broadcast":
-            await start_broadcast_from_button(update, context)
-        elif callback_data == "broadcast_cancel":
-            await cancel_broadcast(update, context)
-        # Whitelist type and reason handling
-        elif callback_data.startswith("wl_type_"):
-            # Handle whitelist type selection for adding new values
-            await handle_wl_type(update, context)
-        elif callback_data.startswith("wl_reason_"):
-            # Handle whitelist reason selection for adding new values
-            await handle_wl_reason(update, context)
-        # Contribution functions
-        elif callback_data == "action_contribute":
-            logger.debug(f"User {update.effective_user.id} pressed Contribute button")
-            await show_contribute_menu(update, context)
-        elif callback_data == "view_contribute":
-            logger.debug(f"User {update.effective_user.id} viewing contributions")
-            await show_contributions_menu(update, context)
-        elif callback_data == "add_contribution":
-            logger.debug(f"User {update.effective_user.id} adding a new contribution")
-            result = await start_add_contribution(update, context)
-            # If result is a state, register it correctly
-            if isinstance(result, int):
-                context.user_data['conversation_state'] = result
-        else:
-            logger.warning(f"Unhandled callback data: {callback_data}")
-            await query.answer("Эта функция находится в разработке.")
-
-
-    async def show_links_menu(
-            update: Update,
-            context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Show links and FAQ information"""
-        keyboard = [[InlineKeyboardButton(
-            "🏠 Вернуться в главное меню", callback_data="back_to_main")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        message_text = (
-            "*📚 Полезные ссылки и FAQ*\n\n"
-            "🔗 *Официальные ресурсы проекта Buddies:*\n"
-            "• [Официальный сайт](https://megabuddies.io)\n"
-            "• [Twitter/X](https://twitter.com/MegaBuddiesNFT)\n"
-            "• [Discord](https://discord.gg/megabuddies)\n\n"
-            "❓ *Часто задаваемые вопросы:*\n"
-            "• *Как попасть в вайтлист?*\n"
-            "  Следите за анонсами в официальных каналах\n\n"
-            "• *Как проверить статус в вайтлисте?*\n"
-            "  Используйте кнопку «Проверить» в главном меню\n\n"
-            "• *Где узнать о новых анонсах?*\n"
-            "  В Discord и Twitter/X проекта"
-        )
-
-        if update.callback_query:
-            await update.callback_query.edit_message_text(
-                message_text,
-                reply_markup=reply_markup,
-                parse_mode='Markdown',
-                disable_web_page_preview=True
-            )
-        else:
-            await update.message.reply_text(
-                message_text,
-                reply_markup=reply_markup,
-                parse_mode='Markdown',
-                disable_web_page_preview=True
-            )
-
-
-    async def menu_command(
-            update: Update,
-            context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handler for the /menu command"""
-        await show_main_menu(update, context)
-        # Show keyboard after menu command
-        await show_persistent_keyboard(update, context)
-
-
-    async def setup_commands(application: Application) -> None:
-        """Set up bot commands and description"""
-        bot = application.bot
-
-        # Commands for all users
-        commands = [
-            BotCommand("start", "Запустить бота и показать главное меню"),
-            BotCommand("menu", "Показать главное меню"),
-            BotCommand("help", "Показать справку по командам"),
-            BotCommand("check", "Проверить значение в вайтлисте"),
-            BotCommand("contribute", "Внести свой вклад с полезными ссылками")
-        ]
-
-        # Try to set commands for all users
-        try:
-            await bot.set_my_commands(commands)
-        except Exception as e:
-            logger.error(f"Error setting up commands: {e}")
-
-        # Additional commands for admins
-        admin_commands = commands + [
-            BotCommand("admin", "Админ-панель для управления ботом"),
-            BotCommand("list", "Показать все записи в вайтлисте"),
-            BotCommand("add", "Добавить новое значение в вайтлист"),
-            BotCommand("remove", "Удалить значение из вайтлиста"),
-            BotCommand("broadcast", "Отправить сообщение всем пользователям"),
-            BotCommand("stats", "Статистика использования бота"),
-            BotCommand("export", "Экспортировать базу данных в CSV"),
-            BotCommand("import", "Импортировать данные в базу из CSV файла")
-        ]
-
-        # Try to set admin commands for each admin
-        for admin_id in ADMIN_IDS:
-            try:
-                scope = BotCommandScopeChat(chat_id=admin_id)
-                await bot.set_my_commands(admin_commands, scope=scope)
-            except Exception as e:
-                logger.error(f"Error setting up admin commands for user {admin_id}: {e}")
-
-        # Set bot description
-        await bot.set_my_description(
-            "MegaBuddies бот для проверки и управления вайтлистом. "
-            "Позволяет проверить статус вашего адреса в базе данных, "
-            "а администраторам - управлять записями в вайтлисте."
-        )
-
-        # Set short description for bot startup screen
-        await bot.set_my_short_description(
-            "Бот для проверки и управления вайтлистом MegaBuddies"
-        )
-
-        logger.info(
-            "Bot commands and descriptions set up successfully")
-
-
-    async def handle_export_button(update: Update,
-                                   context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle export button click"""
-        user = update.effective_user
-
-        # Only admins can export data
-        if user.id not in ADMIN_IDS:
-            await update.callback_query.answer("У вас нет прав для экспорта данных.")
-            return
-
-        # Change button message to show progress
-        await update.callback_query.edit_message_text(
-            "🔄 Подготовка экспорта данных...\n\n"
-            "Пожалуйста, подождите. Файл будет отправлен в ближайшие секунды."
-        )
-
-        try:
-            # Export data to CSV
-            success, filename = db.export_whitelist_to_csv()
-
-            if success:
-                # Send the generated file to the user
-                with open(filename, 'rb') as file:
-                    await context.bot.send_document(
-                        chat_id=update.effective_chat.id,
-                        document=file,
-                        filename=filename,
-                        caption="📊 Экспорт базы данных вайтлиста"
-                    )
-
-                # Log the export event
-                db.log_event(
-                    "export_data", user.id, {
-                        "format": "csv", "filename": filename}, True)
-
-                # Return to admin menu
-                await show_admin_menu(update, context)
-            else:
-                # Show error and go back to admin menu
-                keyboard = [[InlineKeyboardButton(
-                    "◀️ Назад к админ-панели", callback_data="menu_admin")]]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-
-                await update.callback_query.edit_message_text(
-                    "❌ Не удалось экспортировать данные. Возможно, база данных пуста.",
-                    reply_markup=reply_markup
-                )
-        except Exception as e:
-            logger.error(f"Error exporting data: {e}")
-
-            # Show error and go back to admin menu
-            keyboard = [[InlineKeyboardButton(
-                "◀️ Назад к админ-панели", callback_data="menu_admin")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            await update.callback_query.edit_message_text(
-                f"❌ Ошибка при экспорте данных: {str(e)}",
-                reply_markup=reply_markup
-            )
-
-
-    async def export_command(
-            update: Update,
-            context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handler for the /export command - exports whitelist to CSV"""
-        user = update.effective_user
-
-        # Only admins can export data
-        if user.id not in ADMIN_IDS:
-            await update.message.reply_text("⛔ У вас нет прав для экспорта данных.")
-            return
-
-        # Send a message that export is in progress
-        progress_message = await update.message.reply_text(
-            "🔄 Подготовка экспорта данных...",
-            reply_markup=None
-        )
-
-        try:
-            # Export data to CSV
-            success, filename = db.export_whitelist_to_csv()
-
-            if success:
-                # Send the generated file to the user
-                await progress_message.edit_text("✅ Данные успешно экспортированы! Отправляю файл...")
-
-                with open(filename, 'rb') as file:
-                    await context.bot.send_document(
-                        chat_id=update.effective_chat.id,
-                        document=file,
-                        filename=filename,
-                        caption="📊 Экспорт базы данных вайтлиста"
-                    )
-
-                # Log the export event
-                db.log_event(
-                    "export_data", user.id, {
-                        "format": "csv", "filename": filename}, True)
-
-                # Clean up the progress message
-                await progress_message.delete()
-            else:
-                await progress_message.edit_text("❌ Не удалось экспортировать данные. Возможно, база данных пуста.")
-        except Exception as e:
-            logger.error(f"Error exporting data: {e}")
-            await progress_message.edit_text(f"❌ Ошибка при экспорте данных: {str(e)}")
-
-
-    async def import_command(
-            update: Update,
-            context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handler for the /import command - starts the import process"""
-        user = update.effective_user
-
-        # Only admins can import data
-        if user.id not in ADMIN_IDS:
-            await update.message.reply_text("⛔ У вас нет прав для импорта данных.")
-            return
-
-        # Show import instructions
-        message_text = (
-            "*📥 Импорт данных в базу*\n\n"
-            "Отправьте CSV-файл с данными для импорта.\n\n"
-            "Формат файла:\n"
-            "• CSV с разделителями-запятыми\n"
-            "• Можно с заголовками или без\n"
-            "• Столбцы: value, wl_type, wl_reason\n"
-            "• Минимально необходим только столбец value\n\n"
-            "После загрузки файла вы сможете выбрать режим импорта:\n"
-            "• *Добавление* - добавит новые записи к существующим\n"
-            "• *Замена* - удалит все существующие записи и загрузит новые"
-        )
-
-        # Set the expected file flag
-        context.user_data['expecting_import_file'] = True
-
-        # Send import instructions
-        await update.message.reply_text(
-            message_text,
-            parse_mode='Markdown'
-        )
-
-
-    async def handle_import_file(update: Update,
-                                 context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle CSV file upload for import"""
-        user = update.effective_user
-
-        # Only admins can import data
-        if user.id not in ADMIN_IDS:
-            return
-
-        # Check if we're expecting an import file
-        if not context.user_data.get('expecting_import_file', False):
-            return
-
-        # Reset the flag
-        context.user_data['expecting_import_file'] = False
-
-        # Process the file
-        if update.message.document:
-            file = update.message.document
-
-            # Check if it's a CSV file
-            file_name = file.file_name
-            if not file_name.lower().endswith('.csv'):
-                await update.message.reply_text(
-                    "❌ Пожалуйста, загрузите файл в формате CSV. "
-                    "Файл должен иметь расширение .csv",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton(
-                            "↩️ Попробовать снова",
-                            callback_data="admin_import")
-                    ]])
-                )
-                return
-
-            # Show processing message
-            progress_message = await update.message.reply_text(
-                "⏳ Загрузка и обработка файла...",
-                reply_markup=None
-            )
-
-            try:
-                # Download the file
-                file_info = await context.bot.get_file(file.file_id)
-                downloaded_file = await file_info.download_as_bytearray()
-
-                # Save to temporary file
-                import tempfile
-                import os
-
-                temp_dir = tempfile.gettempdir()
-                temp_file_path = os.path.join(temp_dir, file_name)
-
-                with open(temp_file_path, 'wb') as f:
-                    f.write(downloaded_file)
-
-                # Store file path in context for later processing
-                context.user_data['import_file_path'] = temp_file_path
-
-                # Show import options
-                await progress_message.edit_text(
-                    f"✅ Файл {file_name} успешно загружен.\n\n"
-                    "Выберите режим импорта:",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton(
-                            "📝 Добавить к существующим", callback_data="import_append")],
-                        [InlineKeyboardButton(
-                            "🔄 Заменить все данные", callback_data="import_replace")],
-                        [InlineKeyboardButton(
-                            "❌ Отменить импорт", callback_data="import_cancel")]
-                    ])
-                )
-
-                # Log event
-                db.log_event(
-                    "import_file_upload", user.id, {
-                        "filename": file_name}, True)
-
-            except Exception as e:
-                logger.error(f"Error processing import file: {e}")
-                await progress_message.edit_text(
-                    f"❌ Ошибка при обработке файла: {str(e)}",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton(
-                            "↩️ Попробовать снова",
-                            callback_data="admin_import")
-                    ]])
-                )
-            else:
-                await update.message.reply_text(
-                    "❌ Пожалуйста, отправьте файл в формате CSV.",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton(
-                            "↩️ Попробовать снова",
-                            callback_data="admin_import")
-                    ]])
-                )
-
-
-    async def process_import(
-            update: Update,
-            context: ContextTypes.DEFAULT_TYPE,
-            mode: str) -> None:
-        """Process the import with the selected mode"""
-        # Get the file path from context
-        file_path = context.user_data.get('import_file_path')
-        if not file_path:
-            await update.callback_query.edit_message_text(
-                "❌ Ошибка: файл для импорта не найден. Пожалуйста, загрузите файл снова.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton(
-                        "↩️ Попробовать снова",
-                        callback_data="admin_import")
-                ]])
-            )
-            return
-
-        # Update message to show progress
-        await update.callback_query.edit_message_text(
-            f"⏳ Импорт данных в режиме {mode}...\n\n"
-            "Этот процесс может занять некоторое время для больших файлов."
-        )
-
-        try:
-            # Import the data
-            import_mode = "replace" if mode == "replace" else "append"
-            success, stats = db.import_whitelist_from_csv(
-                file_path, import_mode)
-
-            if success:
-                # Format result message
-                mode_text = "замены" if mode == "replace" else "добавления"
-                message_text = (
-                    f"✅ Импорт в режиме {mode_text} завершен успешно!\n\n"
-                    f"📊 *Статистика импорта:*\n"
-                    f"• Обработано строк: {stats.get('processed', 0)}\n"
-                    f"• Добавлено записей: {stats.get('added', 0)}\n"
-                    f"• Пропущено (дубликаты): {stats.get('skipped', 0)}\n"
-                    f"• Некорректных строк: {stats.get('invalid', 0)}\n\n"
-                    f"Всего записей в базе: {db.get_whitelist_count()}"
-                )
-
-                # Log event
-                db.log_event("import_complete", update.effective_user.id, {
-                    "mode": import_mode,
-                    "stats": stats
-                }, True)
-
-                # Clean up the temporary file
-                import os
-                try:
-                    os.remove(file_path)
-                    logger.debug(f"Temporary file {file_path} deleted")
-                except Exception as e:
-                    logger.warning(
-                        f"Could not delete temporary file {file_path}: {e}")
-
-                # Clear the stored file path
-                if 'import_file_path' in context.user_data:
-                    del context.user_data['import_file_path']
-
-                # Add buttons for next steps
-                keyboard = [
-                    [InlineKeyboardButton(
-                        "📋 Просмотреть базу данных", callback_data="admin_list")],
-                    [InlineKeyboardButton(
-                        "📥 Импортировать еще", callback_data="admin_import")],
-                    [InlineKeyboardButton(
-                        "◀️ Назад к админ-панели", callback_data="menu_admin")]
-                ]
-
-                # Send result message
-                await update.callback_query.edit_message_text(
-                    message_text,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode='Markdown'
-                )
-            else:
-                error_message = stats.get("error", "Неизвестная ошибка")
-                await update.callback_query.edit_message_text(
-                    f"❌ Ошибка при импорте данных: {error_message}",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton(
-                            "↩️ Попробовать снова",
-                            callback_data="admin_import")
-                    ]])
-                )
-        except Exception as e:
-            logger.error(f"Error during import process: {e}")
-            await update.callback_query.edit_message_text(
-                f"❌ Ошибка при импорте данных: {str(e)}",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton(
-                        "↩️ Попробовать снова",
-                        callback_data="admin_import")
-                ]])
-            )
-
-
-    async def show_import_menu(
-            update: Update,
-            context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Show the import menu with instructions"""
-        user = update.effective_user
-
-        # Only admins can import data
-        if user.id not in ADMIN_IDS:
-            if update.callback_query:
-                await update.callback_query.answer("У вас нет прав для импорта данных.")
-            else:
-                await update.message.reply_text("⛔ У вас нет прав для импорта данных.")
-            return
-
-        # Set the expected file flag
-        context.user_data['expecting_import_file'] = True
-
-        message_text = (
-            "*📥 Импорт данных в базу*\n\n"
-            "Отправьте CSV-файл с данными для импорта.\n\n"
-            "Формат файла:\n"
-            "• CSV с разделителями-запятыми\n"
-            "• Можно с заголовками или без\n"
-            "• Столбцы: value, wl_type, wl_reason\n"
-            "• Минимально необходим только столбец value\n\n"
-            "После загрузки файла вы сможете выбрать режим импорта:\n"
-            "• *Добавление* - добавит новые записи к существующим\n"
-            "• *Замена* - удалит все существующие записи и загрузит новые"
-        )
-
-        # Add cancel button
-        keyboard = [[InlineKeyboardButton(
-            "◀️ Назад к админ-панели", callback_data="menu_admin")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        # Show message
-        if update.callback_query:
-            await update.callback_query.edit_message_text(
-                message_text,
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
-            )
-        else:
-            await update.message.reply_text(
-                message_text,
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
-            )
-
-
-    async def error_handler(
-            update: object,
-            context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle errors in the telegram bot"""
-        try:
-            if update and isinstance(
-                    update, Update) and update.effective_message:
-                # Only send error to chat if it's a known error for user input
-                context_error = context.error
-                if isinstance(context_error, (ValueError, KeyError)):
-                    await update.effective_message.reply_text(
-                        "Неверный формат ввода. Пожалуйста, попробуйте еще раз.")
-                    return
-
-            # Log the error
-            logger.error(f"Exception while handling an update: {context.error}")
-
-            # Trace back the error
-            import traceback
-            tb_list = traceback.format_exception(
-                None, context.error, context.error.__traceback__)
-            tb_string = ''.join(tb_list)
-            logger.error(f"Exception traceback:\n{tb_string}")
-
-            # Try to restore the conversation state if needed
-            if (context.user_data.get('expecting_add') or
-                context.user_data.get('expecting_remove') or
-                context.user_data.get('expecting_check') or
-                context.user_data.get('expecting_broadcast') or
-                context.user_data.get('expecting_import_file')):
-
-                # Reset all conversation flags
-                context.user_data['expecting_add'] = False
-                context.user_data['expecting_remove'] = False
-                context.user_data['expecting_check'] = False
-                context.user_data['expecting_broadcast'] = False
-                context.user_data['expecting_import_file'] = False
-
-                # Clean up any temporary files
-                if 'import_file_path' in context.user_data:
-                    import os
-                    try:
-                        os.remove(context.user_data['import_file_path'])
-                    except Exception as e:
-                        logger.warning(f"Could not delete temporary file: {e}")
-
-            # Send message to developer/admin
-            for admin_id in ADMIN_IDS:
-                try:
-                    error_message = (
-                        f"🔴 *Критическая ошибка в боте:*\n\n"
-                        f"```\n{str(context.error)[:200]}...\n```"
-                    )
-                    await context.bot.send_message(
-                        chat_id=admin_id,
-                        text=error_message,
-                        parse_mode='Markdown'
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to notify admin {admin_id}: {e}")
-        except Exception as e:
-            logger.error(f"Error in error handler: {e}")
-
-
-    # Add contribution-related functions
 async def show_contribute_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show menu for contributing a value"""
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")]]
@@ -2310,7 +1524,833 @@ async def handle_contribute_value(update: Update, context: ContextTypes.DEFAULT_
     
     return ConversationHandler.END
 
-    def main() -> None:
+    
+# Moved function setup_commands
+
+
+
+
+
+# Moved function menu_command
+
+
+
+
+
+# Moved function export_command
+
+
+
+
+
+# Moved function import_command
+
+
+
+
+
+# Moved function button_callback
+
+
+
+
+
+# Moved function handle_import_file
+
+
+
+
+
+# Moved function handle_message
+
+
+
+
+
+# Moved function setup_commands
+async def setup_commands(application: Application) -> None:
+    """Set up bot commands and description"""
+    bot = application.bot
+
+    # Commands for all users
+    commands = [
+        BotCommand("start", "Запустить бота и показать главное меню"),
+        BotCommand("menu", "Показать главное меню"),
+        BotCommand("help", "Показать справку по командам"),
+        BotCommand("check", "Проверить значение в вайтлисте"),
+        BotCommand("contribute", "Внести свой вклад с полезными ссылками")
+    ]
+
+    # Try to set commands for all users
+    try:
+        await bot.set_my_commands(commands)
+    except Exception as e:
+        logger.error(f"Error setting up commands: {e}")
+
+    # Additional commands for admins
+    admin_commands = commands + [
+        BotCommand("admin", "Админ-панель для управления ботом"),
+        BotCommand("list", "Показать все записи в вайтлисте"),
+        BotCommand("add", "Добавить новое значение в вайтлист"),
+        BotCommand("remove", "Удалить значение из вайтлиста"),
+        BotCommand("broadcast", "Отправить сообщение всем пользователям"),
+        BotCommand("stats", "Статистика использования бота"),
+        BotCommand("export", "Экспортировать базу данных в CSV"),
+        BotCommand("import", "Импортировать данные в базу из CSV файла")
+    ]
+
+    # Try to set admin commands for each admin
+    for admin_id in ADMIN_IDS:
+        try:
+            scope = BotCommandScopeChat(chat_id=admin_id)
+            await bot.set_my_commands(admin_commands, scope=scope)
+        except Exception as e:
+            logger.error(f"Error setting up admin commands for user {admin_id}: {e}")
+
+    # Set bot description
+    await bot.set_my_description(
+        "MegaBuddies бот для проверки и управления вайтлистом. "
+        "Позволяет проверить статус вашего адреса в базе данных, "
+        "а администраторам - управлять записями в вайтлисте."
+    )
+
+    # Set short description for bot startup screen
+    await bot.set_my_short_description(
+        "Бот для проверки и управления вайтлистом MegaBuddies"
+    )
+
+    logger.info(
+        "Bot commands and descriptions set up successfully")
+
+
+async def handle_export_button(update: Update,
+                               context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle export button click"""
+    user = update.effective_user
+
+    # Only admins can export data
+    if user.id not in ADMIN_IDS:
+        await update.callback_query.answer("У вас нет прав для экспорта данных.")
+        return
+
+    # Change button message to show progress
+    await update.callback_query.edit_message_text(
+        "🔄 Подготовка экспорта данных...\n\n"
+        "Пожалуйста, подождите. Файл будет отправлен в ближайшие секунды."
+    )
+
+    try:
+        # Export data to CSV
+        success, filename = db.export_whitelist_to_csv()
+
+        if success:
+            # Send the generated file to the user
+            with open(filename, 'rb') as file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=file,
+                    filename=filename,
+                    caption="📊 Экспорт базы данных вайтлиста"
+                )
+
+            # Log the export event
+            db.log_event(
+                "export_data", user.id, {
+                    "format": "csv", "filename": filename}, True)
+
+            # Return to admin menu
+            await show_admin_menu(update, context)
+        else:
+            # Show error and go back to admin menu
+            keyboard = [[InlineKeyboardButton(
+                "◀️ Назад к админ-панели", callback_data="menu_admin")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await update.callback_query.edit_message_text(
+                "❌ Не удалось экспортировать данные. Возможно, база данных пуста.",
+                reply_markup=reply_markup
+            )
+    except Exception as e:
+        logger.error(f"Error exporting data: {e}")
+
+        # Show error and go back to admin menu
+        keyboard = [[InlineKeyboardButton(
+            "◀️ Назад к админ-панели", callback_data="menu_admin")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.callback_query.edit_message_text(
+            f"❌ Ошибка при экспорте данных: {str(e)}",
+            reply_markup=reply_markup
+        )
+async def export_command(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler for the /export command - exports whitelist to CSV"""
+    user = update.effective_user
+
+    # Only admins can export data
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для экспорта данных.")
+        return
+
+    # Send a message that export is in progress
+    progress_message = await update.message.reply_text(
+        "🔄 Подготовка экспорта данных...",
+        reply_markup=None
+    )
+
+    try:
+        # Export data to CSV
+        success, filename = db.export_whitelist_to_csv()
+
+        if success:
+            # Send the generated file to the user
+            await progress_message.edit_text("✅ Данные успешно экспортированы! Отправляю файл...")
+
+            with open(filename, 'rb') as file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=file,
+                    filename=filename,
+                    caption="📊 Экспорт базы данных вайтлиста"
+                )
+
+            # Log the export event
+            db.log_event(
+                "export_data", user.id, {
+                    "format": "csv", "filename": filename}, True)
+
+            # Clean up the progress message
+            await progress_message.delete()
+        else:
+            await progress_message.edit_text("❌ Не удалось экспортировать данные. Возможно, база данных пуста.")
+    except Exception as e:
+        logger.error(f"Error exporting data: {e}")
+        await progress_message.edit_text(f"❌ Ошибка при экспорте данных: {str(e)}")
+async def import_command(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler for the /import command - starts the import process"""
+    user = update.effective_user
+
+    # Only admins can import data
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для импорта данных.")
+        return
+
+    # Show import instructions
+    message_text = (
+        "*📥 Импорт данных в базу*\n\n"
+        "Отправьте CSV-файл с данными для импорта.\n\n"
+        "Формат файла:\n"
+        "• CSV с разделителями-запятыми\n"
+        "• Можно с заголовками или без\n"
+        "• Столбцы: value, wl_type, wl_reason\n"
+        "• Минимально необходим только столбец value\n\n"
+        "После загрузки файла вы сможете выбрать режим импорта:\n"
+        "• *Добавление* - добавит новые записи к существующим\n"
+        "• *Замена* - удалит все существующие записи и загрузит новые"
+    )
+
+    # Set the expected file flag
+    context.user_data['expecting_import_file'] = True
+
+    # Send import instructions
+    await update.message.reply_text(
+        message_text,
+        parse_mode='Markdown'
+    )
+async def handle_import_file(update: Update,
+                             context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle CSV file upload for import"""
+    user = update.effective_user
+
+    # Only admins can import data
+    if user.id not in ADMIN_IDS:
+        return
+
+    # Check if we're expecting an import file
+    if not context.user_data.get('expecting_import_file', False):
+        return
+
+    # Reset the flag
+    context.user_data['expecting_import_file'] = False
+
+    # Process the file
+    if update.message.document:
+        file = update.message.document
+
+        # Check if it's a CSV file
+        file_name = file.file_name
+        if not file_name.lower().endswith('.csv'):
+            await update.message.reply_text(
+                "❌ Пожалуйста, загрузите файл в формате CSV. "
+                "Файл должен иметь расширение .csv",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "↩️ Попробовать снова",
+                        callback_data="admin_import")
+                ]])
+            )
+            return
+
+        # Show processing message
+        progress_message = await update.message.reply_text(
+            "⏳ Загрузка и обработка файла...",
+            reply_markup=None
+        )
+
+        try:
+            # Download the file
+            file_info = await context.bot.get_file(file.file_id)
+            downloaded_file = await file_info.download_as_bytearray()
+
+            # Save to temporary file
+            import tempfile
+            import os
+
+            temp_dir = tempfile.gettempdir()
+            temp_file_path = os.path.join(temp_dir, file_name)
+
+            with open(temp_file_path, 'wb') as f:
+                f.write(downloaded_file)
+
+            # Store file path in context for later processing
+            context.user_data['import_file_path'] = temp_file_path
+
+            # Show import options
+            await progress_message.edit_text(
+                f"✅ Файл {file_name} успешно загружен.\n\n"
+                "Выберите режим импорта:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "📝 Добавить к существующим", callback_data="import_append")],
+                    [InlineKeyboardButton(
+                        "🔄 Заменить все данные", callback_data="import_replace")],
+                    [InlineKeyboardButton(
+                        "❌ Отменить импорт", callback_data="import_cancel")]
+                ])
+            )
+
+            # Log event
+            db.log_event(
+                "import_file_upload", user.id, {
+                    "filename": file_name}, True)
+
+        except Exception as e:
+            logger.error(f"Error processing import file: {e}")
+            await progress_message.edit_text(
+                f"❌ Ошибка при обработке файла: {str(e)}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "↩️ Попробовать снова",
+                        callback_data="admin_import")
+                ]])
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Пожалуйста, отправьте файл в формате CSV.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "↩️ Попробовать снова",
+                        callback_data="admin_import")
+                ]])
+            )
+
+
+async def process_import(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        mode: str) -> None:
+    """Process the import with the selected mode"""
+    # Get the file path from context
+    file_path = context.user_data.get('import_file_path')
+    if not file_path:
+        await update.callback_query.edit_message_text(
+            "❌ Ошибка: файл для импорта не найден. Пожалуйста, загрузите файл снова.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    "↩️ Попробовать снова",
+                    callback_data="admin_import")
+            ]])
+        )
+        return
+
+    # Update message to show progress
+    await update.callback_query.edit_message_text(
+        f"⏳ Импорт данных в режиме {mode}...\n\n"
+        "Этот процесс может занять некоторое время для больших файлов."
+    )
+
+    try:
+        # Import the data
+        import_mode = "replace" if mode == "replace" else "append"
+        success, stats = db.import_whitelist_from_csv(
+            file_path, import_mode)
+
+        if success:
+            # Format result message
+            mode_text = "замены" if mode == "replace" else "добавления"
+            message_text = (
+                f"✅ Импорт в режиме {mode_text} завершен успешно!\n\n"
+                f"📊 *Статистика импорта:*\n"
+                f"• Обработано строк: {stats.get('processed', 0)}\n"
+                f"• Добавлено записей: {stats.get('added', 0)}\n"
+                f"• Пропущено (дубликаты): {stats.get('skipped', 0)}\n"
+                f"• Некорректных строк: {stats.get('invalid', 0)}\n\n"
+                f"Всего записей в базе: {db.get_whitelist_count()}"
+            )
+
+            # Log event
+            db.log_event("import_complete", update.effective_user.id, {
+                "mode": import_mode,
+                "stats": stats
+            }, True)
+
+            # Clean up the temporary file
+            import os
+            try:
+                os.remove(file_path)
+                logger.debug(f"Temporary file {file_path} deleted")
+            except Exception as e:
+                logger.warning(
+                    f"Could not delete temporary file {file_path}: {e}")
+
+            # Clear the stored file path
+            if 'import_file_path' in context.user_data:
+                del context.user_data['import_file_path']
+
+            # Add buttons for next steps
+            keyboard = [
+                [InlineKeyboardButton(
+                    "📋 Просмотреть базу данных", callback_data="admin_list")],
+                [InlineKeyboardButton(
+                    "📥 Импортировать еще", callback_data="admin_import")],
+                [InlineKeyboardButton(
+                    "◀️ Назад к админ-панели", callback_data="menu_admin")]
+            ]
+
+            # Send result message
+            await update.callback_query.edit_message_text(
+                message_text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+        else:
+            error_message = stats.get("error", "Неизвестная ошибка")
+            await update.callback_query.edit_message_text(
+                f"❌ Ошибка при импорте данных: {error_message}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "↩️ Попробовать снова",
+                        callback_data="admin_import")
+                ]])
+            )
+    except Exception as e:
+        logger.error(f"Error during import process: {e}")
+        await update.callback_query.edit_message_text(
+            f"❌ Ошибка при импорте данных: {str(e)}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    "↩️ Попробовать снова",
+                    callback_data="admin_import")
+            ]])
+        )
+
+
+async def show_import_menu(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show the import menu with instructions"""
+    user = update.effective_user
+
+    # Only admins can import data
+    if user.id not in ADMIN_IDS:
+        if update.callback_query:
+            await update.callback_query.answer("У вас нет прав для импорта данных.")
+        else:
+            await update.message.reply_text("⛔ У вас нет прав для импорта данных.")
+        return
+
+    # Set the expected file flag
+    context.user_data['expecting_import_file'] = True
+
+    message_text = (
+        "*📥 Импорт данных в базу*\n\n"
+        "Отправьте CSV-файл с данными для импорта.\n\n"
+        "Формат файла:\n"
+        "• CSV с разделителями-запятыми\n"
+        "• Можно с заголовками или без\n"
+        "• Столбцы: value, wl_type, wl_reason\n"
+        "• Минимально необходим только столбец value\n\n"
+        "После загрузки файла вы сможете выбрать режим импорта:\n"
+        "• *Добавление* - добавит новые записи к существующим\n"
+        "• *Замена* - удалит все существующие записи и загрузит новые"
+    )
+
+    # Add cancel button
+    keyboard = [[InlineKeyboardButton(
+        "◀️ Назад к админ-панели", callback_data="menu_admin")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Show message
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            message_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    else:
+        await update.message.reply_text(
+            message_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
+
+async def error_handler(
+        update: object,
+        context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle errors in the telegram bot"""
+    try:
+        if update and isinstance(
+                update, Update) and update.effective_message:
+            # Only send error to chat if it's a known error for user input
+            context_error = context.error
+            if isinstance(context_error, (ValueError, KeyError)):
+                await update.effective_message.reply_text(
+                    "Неверный формат ввода. Пожалуйста, попробуйте еще раз.")
+                return
+
+        # Log the error
+        logger.error(f"Exception while handling an update: {context.error}")
+
+        # Trace back the error
+        import traceback
+        tb_list = traceback.format_exception(
+            None, context.error, context.error.__traceback__)
+        tb_string = ''.join(tb_list)
+        logger.error(f"Exception traceback:\n{tb_string}")
+
+        # Try to restore the conversation state if needed
+        if (context.user_data.get('expecting_add') or
+            context.user_data.get('expecting_remove') or
+            context.user_data.get('expecting_check') or
+            context.user_data.get('expecting_broadcast') or
+            context.user_data.get('expecting_import_file')):
+
+            # Reset all conversation flags
+            context.user_data['expecting_add'] = False
+            context.user_data['expecting_remove'] = False
+            context.user_data['expecting_check'] = False
+            context.user_data['expecting_broadcast'] = False
+            context.user_data['expecting_import_file'] = False
+
+            # Clean up any temporary files
+            if 'import_file_path' in context.user_data:
+                import os
+                try:
+                    os.remove(context.user_data['import_file_path'])
+                except Exception as e:
+                    logger.warning(f"Could not delete temporary file: {e}")
+
+        # Send message to developer/admin
+        for admin_id in ADMIN_IDS:
+            try:
+                error_message = (
+                    f"🔴 *Критическая ошибка в боте:*\n\n"
+                    f"```\n{str(context.error)[:200]}...\n```"
+                )
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=error_message,
+                    parse_mode='Markdown'
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify admin {admin_id}: {e}")
+    except Exception as e:
+        logger.error(f"Error in error handler: {e}")
+
+
+# Add contribution-related functions
+
+
+# Moved function menu_command
+async def menu_command(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler for the /menu command"""
+    await show_main_menu(update, context)
+    # Show keyboard after menu command
+    await show_persistent_keyboard(update, context)
+
+
+# Moved function button_callback
+async def button_callback(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle button callbacks"""
+    query = update.callback_query
+    callback_data = query.data
+
+    logger.debug(f"Callback query received: {callback_data}")
+
+    # Update user's last activity
+    db.update_user_activity(update.effective_user.id)
+
+    # Log the button click
+    db.log_event("button_click", update.effective_user.id, {"button": callback_data})
+
+    # Main menu and navigation
+    if callback_data == "back_to_main":
+        await show_main_menu(update, context)
+    elif callback_data == "action_check":
+        logger.debug(f"User {update.effective_user.id} pressed Check button")
+        await show_check_menu(update, context)
+    elif callback_data == "action_stats":
+        logger.debug(f"User {update.effective_user.id} pressed Stats button")
+        await show_stats_menu(update, context)
+    elif callback_data == "action_links":
+        logger.debug(f"User {update.effective_user.id} pressed Links button")
+        await show_links_menu(update, context)
+    elif callback_data == "action_admin":
+        logger.debug(f"User {update.effective_user.id} pressed Admin button")
+        await show_admin_menu(update, context)
+    # Admin functions
+    elif callback_data == "menu_admin":
+        await show_admin_menu(update, context)
+    elif callback_data == "admin_add":
+        # Явно устанавливаем флаг ожидания добавления значения
+        context.user_data['expecting_add'] = True
+        await show_add_menu(update, context)
+    elif callback_data == "admin_remove":
+        # Явно устанавливаем флаг ожидания удаления значения
+        context.user_data['expecting_remove'] = True
+        await show_remove_menu(update, context)
+    elif callback_data == "admin_list":
+        await show_list_menu(update, context)
+    elif callback_data == "admin_broadcast":
+        await show_broadcast_menu(update, context)
+    elif callback_data == "admin_export":
+        await handle_export_button(update, context)
+    elif callback_data == "admin_import":
+        await show_import_menu(update, context)
+    # Whitelist pagination
+    elif callback_data == "prev_page":
+        await handle_whitelist_pagination(update, context, -1)
+    elif callback_data == "next_page":
+        await handle_whitelist_pagination(update, context, 1)
+    # Remove from whitelist with confirmation
+    elif callback_data.startswith("remove_"):
+        # Extract the value to remove
+        value_to_remove = callback_data[7:]  # Remove "remove_" prefix
+        success = db.remove_from_whitelist(value_to_remove)
+
+        # Create response message with buttons
+        if success:
+            message_text = f"Значение '{value_to_remove}' успешно удалено из вайтлиста."
+        else:
+            message_text = f"Не удалось удалить значение '{value_to_remove}' из вайтлиста."
+
+        # Add a button to go back to admin menu
+        keyboard = [[InlineKeyboardButton(
+            "◀️ Назад к админ-панели", callback_data="menu_admin")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # Use delete_and_update_message instead of direct edit
+        await query.edit_message_text(
+            message_text,
+            reply_markup=reply_markup
+        )
+    # Import modes
+    elif callback_data == "import_replace":
+        await process_import(update, context, "replace")
+    elif callback_data == "import_append":
+        await process_import(update, context, "append")
+    # Broadcast
+    elif callback_data == "start_broadcast":
+        await start_broadcast_from_button(update, context)
+    elif callback_data == "broadcast_cancel":
+        await cancel_broadcast(update, context)
+    # Whitelist type and reason handling
+    elif callback_data.startswith("wl_type_"):
+        # Handle whitelist type selection for adding new values
+        await handle_wl_type(update, context)
+    elif callback_data.startswith("wl_reason_"):
+        # Handle whitelist reason selection for adding new values
+        await handle_wl_reason(update, context)
+    # Contribution functions
+    elif callback_data == "action_contribute":
+        logger.debug(f"User {update.effective_user.id} pressed Contribute button")
+        await show_contribute_menu(update, context)
+    elif callback_data == "view_contribute":
+        logger.debug(f"User {update.effective_user.id} viewing contributions")
+        await show_contributions_menu(update, context)
+    elif callback_data == "add_contribution":
+        logger.debug(f"User {update.effective_user.id} adding a new contribution")
+        result = await start_add_contribution(update, context)
+        # If result is a state, register it correctly
+        if isinstance(result, int):
+            context.user_data['conversation_state'] = result
+    else:
+        logger.warning(f"Unhandled callback data: {callback_data}")
+        await query.answer("Эта функция находится в разработке.")
+
+
+async def show_links_menu(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show links and FAQ information"""
+    keyboard = [[InlineKeyboardButton(
+        "🏠 Вернуться в главное меню", callback_data="back_to_main")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    message_text = (
+        "*📚 Полезные ссылки и FAQ*\n\n"
+        "🔗 *Официальные ресурсы проекта Buddies:*\n"
+        "• [Официальный сайт](https://megabuddies.io)\n"
+        "• [Twitter/X](https://twitter.com/MegaBuddiesNFT)\n"
+        "• [Discord](https://discord.gg/megabuddies)\n\n"
+        "❓ *Часто задаваемые вопросы:*\n"
+        "• *Как попасть в вайтлист?*\n"
+        "  Следите за анонсами в официальных каналах\n\n"
+        "• *Как проверить статус в вайтлисте?*\n"
+        "  Используйте кнопку «Проверить» в главном меню\n\n"
+        "• *Где узнать о новых анонсах?*\n"
+        "  В Discord и Twitter/X проекта"
+    )
+
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            message_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown',
+            disable_web_page_preview=True
+        )
+    else:
+        await update.message.reply_text(
+            message_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown',
+            disable_web_page_preview=True
+        )
+
+
+# Moved function handle_message
+async def handle_message(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler for all messages"""
+    # Update user's last activity timestamp
+    db.update_user_activity(update.effective_user.id)
+    
+    text = update.message.text.strip()
+    
+    # Добавляем логирование для диагностики
+    user_id = update.effective_user.id
+    logger.debug(f"Получено сообщение от пользователя {user_id}: '{text}'")
+
+    # Handle messages based on expected input
+    if context.user_data.get('expecting_add'):
+        logger.debug(f"Обработка сообщения для добавления в базу данных: '{text}'")
+        context.user_data['expecting_add'] = False
+        await handle_add_value(update, context)
+        return  # Добавлен явный return, чтобы избежать проверки whitelist
+    elif context.user_data.get('expecting_remove'):
+        logger.debug(f"Обработка сообщения для удаления из базы данных: '{text}'")
+        context.user_data['expecting_remove'] = False
+        await handle_remove_value(update, context)
+        return  # Добавлен явный return, чтобы избежать проверки whitelist
+    elif context.user_data.get('expecting_check'):
+        logger.debug(f"Обработка сообщения для проверки в базе данных: '{text}'")
+        context.user_data['expecting_check'] = False
+        await handle_check_value(update, context)
+        return  # Добавлен явный return, чтобы избежать проверки whitelist
+    elif context.user_data.get('expecting_broadcast'):
+        logger.debug(f"Обработка сообщения для рассылки: '{text}'")
+        context.user_data['expecting_broadcast'] = False
+        await start_broadcast_process(update, context)
+        return  # Добавлен явный return, чтобы избежать проверки whitelist
+    elif context.user_data.get('expecting_contribute'):
+        logger.debug(f"Обработка сообщения для вклада: '{text}'")
+        context.user_data['expecting_contribute'] = False
+        await handle_contribute_value(update, context)
+        return  # Добавлен явный return, чтобы избежать проверки whitelist
+    elif 'conversation_state' in context.user_data:
+        state = context.user_data['conversation_state']
+        if state == AWAITING_CONTRIBUTE_LINK:
+            await handle_contribution_link(update, context)
+            return
+        elif state == AWAITING_CONTRIBUTE_DESCRIPTION:
+            await handle_contribution_description(update, context)
+            # Clear the state after handling
+            del context.user_data['conversation_state']
+            return
+    
+    # Normal message handling - check whitelist
+    # Treat any text as a check query for simplicity
+    logger.debug(f"Обработка обычного сообщения как проверки в базе данных: '{text}'")
+    
+    try:
+        # Check the value against whitelist
+        value = text
+        result = db.check_whitelist(value)
+        user = update.effective_user
+        
+        # Create beautiful response
+        if result.get("found", False):
+            message_text = (
+                f"*✅ Результат проверки*\n\n"
+                f"Привет, {user.first_name}! 👋\n\n"
+                f"Значение `{value}` *найдено* в базе данных!\n\n"
+                f"У вас {result.get('wl_type', 'Не указан')} WL потому что вы {result.get('wl_reason', 'Не указана')}! 🎉"
+            )
+        else:
+            message_text = (
+                f"*❌ Результат проверки*\n\n"
+                f"Нам жаль, {user.first_name}, но введенного значения пока нет в BuddyWL.\n\n"
+                f"Мы с нетерпением ждем твой вклад и надеемся скоро увидеть тебя уже вместе с твоим Buddy! 💫"
+            )
+        
+        # Buttons for next action
+        keyboard = [
+            [InlineKeyboardButton("🔄 Проверить другое значение", callback_data="action_check")],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Try to delete the user message for cleaner interface
+        try:
+            await context.bot.delete_message(
+                chat_id=update.message.chat_id,
+                message_id=update.message.message_id
+            )
+        except Exception as e:
+            logger.debug(f"Could not delete user message: {e}")
+        
+        # Всегда отправляем новое сообщение с результатом
+        chat_id = update.effective_chat.id
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=message_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при проверке значения в базе данных: {e}")
+        await update.message.reply_text(
+            "⚠️ Произошла ошибка при проверке. Пожалуйста, попробуйте еще раз или обратитесь к администратору.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
+            ]])
+        )
+    
+    # Очищаем активное сообщение
+    if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
+        del context.chat_data[BOT_ACTIVE_MESSAGE_KEY]
+
+def main() -> None:
         """Start the bot"""
         # Get the bot token from environment variables
         token = os.getenv("BOT_TOKEN")
