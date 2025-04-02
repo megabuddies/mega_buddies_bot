@@ -68,8 +68,26 @@ class Database:
         )
         ''')
         
+        # Добавим тестовые записи, если таблица пуста
+        cursor.execute("SELECT COUNT(*) FROM whitelist")
+        count = cursor.fetchone()[0]
+        
+        if count == 0:
+            print("Whitelist is empty, adding test records...")
+            test_values = [
+                ("0x123456789abcdef", "FCFS", "Mega Buddies holder"),
+                ("Bread", "GTD", "X Contributor")
+            ]
+            cursor.executemany(
+                "INSERT INTO whitelist (value, wl_type, wl_reason) VALUES (?, ?, ?)", 
+                test_values
+            )
+        
         conn.commit()
         conn.close()
+        
+        # Запустим диагностику
+        self.dump_database_diagnostics()
     
     def _migrate_database(self):
         """Check and update database schema if needed"""
@@ -680,4 +698,72 @@ class Database:
             return contributions
         except Exception as e:
             print(f"Error getting user contributions: {e}")
-            return [] 
+            return []
+
+    def dump_database_diagnostics(self):
+        """Create a diagnostic dump of the database for debugging"""
+        print("\n=== DATABASE DIAGNOSTICS ===")
+        
+        try:
+            # Check if the database file exists
+            import os
+            if os.path.exists(self.db_name):
+                print(f"Database file found: {self.db_name}")
+                print(f"File size: {os.path.getsize(self.db_name)} bytes")
+            else:
+                print(f"ERROR: Database file not found: {self.db_name}")
+                return
+            
+            # Test database connection
+            conn = None
+            try:
+                conn = sqlite3.connect(self.db_name)
+                print("Database connection successful")
+            except Exception as e:
+                print(f"ERROR connecting to database: {e}")
+                return
+            
+            # Check tables and counts
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = cursor.fetchall()
+            
+            print(f"\nFound {len(tables)} tables:")
+            
+            for table in tables:
+                table_name = table[0]
+                cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                count = cursor.fetchone()[0]
+                print(f"- {table_name}: {count} records")
+                
+                # Get table structure
+                cursor.execute(f"PRAGMA table_info({table_name})")
+                columns = cursor.fetchall()
+                print(f"  Columns: {', '.join(col[1] for col in columns)}")
+                
+                # For whitelist table, dump all records
+                if table_name == 'whitelist':
+                    print("\n=== WHITELIST CONTENTS ===")
+                    cursor.execute("SELECT * FROM whitelist")
+                    whitelist_records = cursor.fetchall()
+                    
+                    if whitelist_records:
+                        for record in whitelist_records:
+                            print(f"  ID: {record[0]}, Value: '{record[1]}', Type: '{record[2]}', Reason: '{record[3]}'")
+                    else:
+                        print("  EMPTY TABLE - No records found in whitelist table")
+            
+            # Test a query
+            print("\n=== QUERY TEST ===")
+            test_query = "SELECT version FROM sqlite_master LIMIT 1"
+            try:
+                cursor.execute(test_query)
+                print("Test query executed successfully")
+            except Exception as e:
+                print(f"ERROR executing test query: {e}")
+            
+            conn.close()
+            print("\n=== END OF DIAGNOSTICS ===")
+            
+        except Exception as e:
+            print(f"General diagnostics error: {e}") 
