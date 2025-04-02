@@ -41,8 +41,8 @@ logging.basicConfig(
     level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Initialize database
-db = Database()
+# Initialize database (глобальная переменная для доступа из всех функций)
+db = None
 
 # Admin IDs - replace with actual admin user IDs
 ADMIN_IDS = [6327617477]  # Add your admin Telegram user IDs here
