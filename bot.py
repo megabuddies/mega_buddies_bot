@@ -4,7 +4,7 @@ import asyncio
 import time
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Union, Tuple, Set
 import functools
 
@@ -2350,162 +2350,9 @@ async def handle_message(
     if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
         del context.chat_data[BOT_ACTIVE_MESSAGE_KEY]
 
-def main() -> None:
-        """Start the bot"""
-        # Get the bot token from environment variables
-        token = os.getenv("BOT_TOKEN")
-        if not token:
-            logger.error("No BOT_TOKEN found in environment variables!")
-            return
-
-        # Initialize database
-        try:
-            logger.info("Initializing database...")
-            global db
-            db = Database()
-            logger.info("Database initialized successfully")
-        except Exception as e:
-            logger.error(f"Error initializing database: {e}")
-            return
-
-        # Set higher persistence and stability options
-        # Не используем параметр disable_web_page_preview в Defaults
-        defaults = Defaults(
-            parse_mode='Markdown',
-            allow_sending_without_reply=True,
-            tzinfo=datetime.timezone.utc
-        )
-        
-        # Create the Application with persistence
-        persistence = PicklePersistence(filepath="bot_data")
-        
-        # Создаем приложение без использования rate_limiter с проблемными параметрами
-        application = (
-            Application.builder()
-            .token(token)
-            .defaults(defaults)
-            .persistence(persistence)
-            .build()
-        )
-        
-        # Setup bot commands and description on startup
-        application.post_init = setup_commands
-        
-        # Command handlers
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("menu", menu_command))
-        application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("stats", stats_command))
-        application.add_handler(CommandHandler("broadcast", broadcast_command))
-        application.add_handler(CommandHandler("admin", show_admin_menu))
-        application.add_handler(CommandHandler("export", export_command))
-        application.add_handler(CommandHandler("import", import_command))
-        application.add_handler(CommandHandler("check", show_check_menu))
-        application.add_handler(CommandHandler("contribute", show_contribute_menu))
-        
-        # Add conversation handlers
-        
-        # Add conversation handler for contributions
-        contribution_conv_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler("contribute", show_contribute_menu),
-                CallbackQueryHandler(start_add_contribution, pattern="^add_contribution$")
-            ],
-            states={
-                AWAITING_CONTRIBUTE_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_contribution_link)],
-                AWAITING_CONTRIBUTE_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_contribution_description)]
-            },
-            fallbacks=[CallbackQueryHandler(show_contributions_menu, pattern="^view_contribute$")],
-            name="contribution_conversation",
-            persistent=True
-        )
-        application.add_handler(contribution_conv_handler)
-        
-        # Add conversation handler for check
-        check_conv_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler("check", show_check_menu),
-                CallbackQueryHandler(show_check_menu, pattern="^action_check$")
-            ],
-            states={
-                AWAITING_CHECK_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_check_value)]
-            },
-            fallbacks=[CallbackQueryHandler(button_callback)],
-            name="check_conversation",
-            persistent=False,
-            per_chat=True
-        )
-        application.add_handler(check_conv_handler)
-        
-        # Add conversation handler for adding values
-        add_conv_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler("add", show_add_menu),
-                CallbackQueryHandler(show_add_menu, pattern="^admin_add$")
-            ],
-            states={
-                AWAITING_ADD_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_value)],
-                AWAITING_WL_TYPE: [CallbackQueryHandler(handle_wl_type, pattern="^wl_type_")],
-                AWAITING_WL_REASON: [CallbackQueryHandler(handle_wl_reason, pattern="^wl_reason_")]
-            },
-            fallbacks=[CallbackQueryHandler(button_callback)],
-            name="add_conversation",
-            persistent=False,
-            per_chat=True
-        )
-        application.add_handler(add_conv_handler)
-        
-        # Add conversation handler for removing values
-        remove_conv_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler("remove", show_remove_menu),
-                CallbackQueryHandler(show_remove_menu, pattern="^admin_remove$")
-            ],
-            states={
-                AWAITING_REMOVE_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_value)]
-            },
-            fallbacks=[CallbackQueryHandler(button_callback)],
-            name="remove_conversation",
-            persistent=False,
-            per_chat=True
-        )
-        application.add_handler(remove_conv_handler)
-        
-        # Add conversation handler for broadcasting messages
-        broadcast_conv_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler("broadcast", broadcast_command),
-                CallbackQueryHandler(show_broadcast_menu, pattern="^admin_broadcast$")
-            ],
-            states={
-                BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message)]
-            },
-            fallbacks=[CallbackQueryHandler(button_callback)],
-            name="broadcast_conversation",
-            persistent=False,
-            per_chat=True
-        )
-        application.add_handler(broadcast_conv_handler)
-        
-        # Add handler for document uploads (for import)
-        application.add_handler(MessageHandler(filters.Document.ALL, handle_import_file))
-        
-        # Add callback query handler - перемещено после ConversationHandler, но перед MessageHandler
-        application.add_handler(CallbackQueryHandler(button_callback))
-        
-        # Add message handler to catch all unhandled messages
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        
-        # Start the Bot
-        logger.info("Starting the bot...")
-        application.run_polling()
 
 
-    if __name__ == "__main__":
-        main()
-
-
-
+# Functions moved from after if __name__ block
 async def show_contributions_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show all contributions for a value and option to add new one"""
     query = update.callback_query
@@ -2664,3 +2511,159 @@ async def handle_contribution_description(update: Update, context: ContextTypes.
         del context.user_data['contribute_link']
     
     return ConversationHandler.END
+
+def main() -> None:
+        """Start the bot"""
+        # Get the bot token from environment variables
+        token = os.getenv("BOT_TOKEN")
+        if not token:
+            logger.error("No BOT_TOKEN found in environment variables!")
+            return
+
+        # Initialize database
+        try:
+            logger.info("Initializing database...")
+            global db
+            db = Database()
+            logger.info("Database initialized successfully")
+        except Exception as e:
+            logger.error(f"Error initializing database: {e}")
+            return
+
+        # Set higher persistence and stability options
+        # Не используем параметр disable_web_page_preview в Defaults
+        defaults = Defaults(
+            parse_mode='Markdown',
+            allow_sending_without_reply=True,
+            tzinfo=timezone.utc
+        )
+        
+        # Create the Application with persistence
+        persistence = PicklePersistence(filepath="bot_data")
+        
+        # Создаем приложение без использования rate_limiter с проблемными параметрами
+        application = (
+            Application.builder()
+            .token(token)
+            .defaults(defaults)
+            .persistence(persistence)
+            .build()
+        )
+        
+        # Setup bot commands and description on startup
+        application.post_init = setup_commands
+        
+        # Command handlers
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("menu", menu_command))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("stats", stats_command))
+        application.add_handler(CommandHandler("broadcast", broadcast_command))
+        application.add_handler(CommandHandler("admin", show_admin_menu))
+        application.add_handler(CommandHandler("export", export_command))
+        application.add_handler(CommandHandler("import", import_command))
+        application.add_handler(CommandHandler("check", show_check_menu))
+        application.add_handler(CommandHandler("contribute", show_contribute_menu))
+        
+        # Add conversation handlers
+        
+        # Add conversation handler for contributions
+        contribution_conv_handler = ConversationHandler(
+            entry_points=[
+                CommandHandler("contribute", show_contribute_menu),
+                CallbackQueryHandler(start_add_contribution, pattern="^add_contribution$")
+            ],
+            states={
+                AWAITING_CONTRIBUTE_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_contribution_link)],
+                AWAITING_CONTRIBUTE_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_contribution_description)]
+            },
+            fallbacks=[CallbackQueryHandler(show_contributions_menu, pattern="^view_contribute$")],
+            name="contribution_conversation",
+            persistent=True
+        )
+        application.add_handler(contribution_conv_handler)
+        
+        # Add conversation handler for check
+        check_conv_handler = ConversationHandler(
+            entry_points=[
+                CommandHandler("check", show_check_menu),
+                CallbackQueryHandler(show_check_menu, pattern="^action_check$")
+            ],
+            states={
+                AWAITING_CHECK_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_check_value)]
+            },
+            fallbacks=[CallbackQueryHandler(button_callback)],
+            name="check_conversation",
+            persistent=False,
+            per_chat=True
+        )
+        application.add_handler(check_conv_handler)
+        
+        # Add conversation handler for adding values
+        add_conv_handler = ConversationHandler(
+            entry_points=[
+                CommandHandler("add", show_add_menu),
+                CallbackQueryHandler(show_add_menu, pattern="^admin_add$")
+            ],
+            states={
+                AWAITING_ADD_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_value)],
+                AWAITING_WL_TYPE: [CallbackQueryHandler(handle_wl_type, pattern="^wl_type_")],
+                AWAITING_WL_REASON: [CallbackQueryHandler(handle_wl_reason, pattern="^wl_reason_")]
+            },
+            fallbacks=[CallbackQueryHandler(button_callback)],
+            name="add_conversation",
+            persistent=False,
+            per_chat=True
+        )
+        application.add_handler(add_conv_handler)
+        
+        # Add conversation handler for removing values
+        remove_conv_handler = ConversationHandler(
+            entry_points=[
+                CommandHandler("remove", show_remove_menu),
+                CallbackQueryHandler(show_remove_menu, pattern="^admin_remove$")
+            ],
+            states={
+                AWAITING_REMOVE_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_value)]
+            },
+            fallbacks=[CallbackQueryHandler(button_callback)],
+            name="remove_conversation",
+            persistent=False,
+            per_chat=True
+        )
+        application.add_handler(remove_conv_handler)
+        
+        # Add conversation handler for broadcasting messages
+        broadcast_conv_handler = ConversationHandler(
+            entry_points=[
+                CommandHandler("broadcast", broadcast_command),
+                CallbackQueryHandler(show_broadcast_menu, pattern="^admin_broadcast$")
+            ],
+            states={
+                BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message)]
+            },
+            fallbacks=[CallbackQueryHandler(button_callback)],
+            name="broadcast_conversation",
+            persistent=False,
+            per_chat=True
+        )
+        application.add_handler(broadcast_conv_handler)
+        
+        # Add handler for document uploads (for import)
+        application.add_handler(MessageHandler(filters.Document.ALL, handle_import_file))
+        
+        # Add callback query handler - перемещено после ConversationHandler, но перед MessageHandler
+        application.add_handler(CallbackQueryHandler(button_callback))
+        
+        # Add message handler to catch all unhandled messages
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        
+        # Start the Bot
+        logger.info("Starting the bot...")
+        application.run_polling()
+
+
+
+
+if __name__ == "__main__":
+    main()
