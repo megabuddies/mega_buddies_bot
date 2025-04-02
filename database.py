@@ -215,36 +215,56 @@ class Database:
         import time
         self._cache_timestamp[cache_key] = time.time()
 
+    def sync(self) -> bool:
+        """Force sync the database to disk"""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA wal_checkpoint(FULL)")
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error syncing database: {e}")
+            return False
+
     def check_whitelist(self, value: str) -> Dict[str, Any]:
         """Check if a value exists in the whitelist and return details"""
+        if not value or not value.strip():
+            return {"found": False, "error": "Empty value provided"}
+            
         # Проверяем кэш сначала
         cache_key = f"wl_{value}"
         if cache_key in self._cache['whitelist'] and self._is_cache_valid('whitelist'):
             return self._cache['whitelist'][cache_key]
         
-        # Если нет в кэше, проверяем в базе
-        query = "SELECT id, value, wl_type, wl_reason FROM whitelist WHERE value = ?"
-        row = self._execute_query(query, (value,), fetch_one=True)
-        
-        if row:
-            result = {
-                "found": True,
-                "id": row[0],
-                "value": row[1],
-                "wl_type": row[2],
-                "wl_reason": row[3]
-            }
-        else:
-            result = {"found": False}
-        
-        # Сохраняем в кэш
-        self._cache['whitelist'][cache_key] = result
-        self._update_cache_timestamp('whitelist')
-        
-        # Record the check event
-        self.log_event("check", None, {"value": value, "result": result["found"]}, result["found"])
-        
-        return result
+        try:
+            # Если нет в кэше, проверяем в базе
+            query = "SELECT id, value, wl_type, wl_reason FROM whitelist WHERE value = ?"
+            row = self._execute_query(query, (value,), fetch_one=True)
+            
+            if row:
+                result = {
+                    "found": True,
+                    "id": row[0],
+                    "value": row[1],
+                    "wl_type": row[2],
+                    "wl_reason": row[3]
+                }
+            else:
+                result = {"found": False}
+            
+            # Сохраняем в кэш
+            self._cache['whitelist'][cache_key] = result
+            self._update_cache_timestamp('whitelist')
+            
+            # Record the check event
+            self.log_event("check", None, {"value": value, "result": result["found"]}, result["found"])
+            
+            return result
+        except Exception as e:
+            print(f"Error checking whitelist: {e}")
+            return {"found": False, "error": str(e)}
 
     def get_all_whitelist(self) -> List[Dict[str, Any]]:
         """Get all values in the whitelist with their details"""

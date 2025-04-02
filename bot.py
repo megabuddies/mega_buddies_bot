@@ -41,8 +41,10 @@ logging.basicConfig(
     level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Initialize database (глобальная переменная для доступа из всех функций)
-db = None
+# Initialize database
+logger.info("Initializing database at module level...")
+db = Database()
+logger.info("Database initialized successfully at module level")
 
 # Admin IDs - replace with actual admin user IDs
 ADMIN_IDS = [6327617477]  # Add your admin Telegram user IDs here
@@ -409,83 +411,102 @@ async def show_check_menu(
     return AWAITING_CHECK_VALUE
 
 
-@measure_time
-async def handle_check_value(update: Update,
-                             context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle checking a value in the whitelist"""
+async def handle_check_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle submitted value for checking"""
     user = update.effective_user
-    value = update.message.text.strip()
-
-    logger.debug(
-        f"Проверка значения в базе данных: '{value}' от пользователя {user.id}")
-
-    try:
-        # Check the value against whitelist
-        result = db.check_whitelist(value)
-
-        # Log the check event
-        db.log_event(
-            "check_whitelist",
-            update.effective_user.id,
-            {"value": value},
-            bool(result.get("found", False))
+    chat_id = chat_id_from_update(update)
+    text = update.message.text.strip()
+    
+    # Reset the flag
+    if 'expecting_check' in context.user_data:
+        del context.user_data['expecting_check']
+    
+    # Check if input is valid
+    if not text:
+        await update.message.reply_text(
+            "❌ Пожалуйста, введите непустое значение для проверки."
         )
-
-        # Create reply markup with buttons for next actions
+        return ConversationHandler.END
+    
+    # Force database sync before critical operation
+    db.sync()
+    
+    # Log the check attempt
+    logger.debug(f"Checking value '{text}' for user {user.id}")
+    
+    # Check if the value exists in the whitelist
+    result = db.check_whitelist(text)
+    
+    # If error occurred during check
+    if "error" in result:
+        logger.error(f"Error checking whitelist: {result['error']}")
+        await update.message.reply_text(
+            f"❌ Произошла ошибка при проверке: {result['error']}"
+        )
+        return ConversationHandler.END
+    
+    if result.get("found", False):
+        # Value exists in the whitelist
+        wl_type = result.get("wl_type", "Не указан")
+        wl_reason = result.get("wl_reason", "Не указано")
+        
+        message_text = (
+            f"✅ {user.first_name}, ваше значение найдено в вайтлисте!\n\n"
+            f"*Значение:* `{text}`\n"
+            f"*Тип:* {wl_type}\n"
+            f"*Причина:* {wl_reason}"
+        )
+        
+        # Check for any contributions
+        contributions = db.get_user_contributions(text)
+        
+        if contributions:
+            message_text += f"\n\n📋 Для этого значения есть {len(contributions)} вкладов"
+            view_contributions_button = [InlineKeyboardButton("👀 Посмотреть вклады", callback_data="view_contribute")]
+        else:
+            message_text += "\n\nДля этого значения пока нет вкладов"
+            view_contributions_button = []
+        
+        # Create keyboard with relevant buttons
         keyboard = [
-            [InlineKeyboardButton(
-                "🔄 Проверить другое значение", callback_data="action_check")],
-            [InlineKeyboardButton(
-                "🏠 Вернуться в главное меню", callback_data="back_to_main")]
+            [InlineKeyboardButton("🔍 Проверить другое значение", callback_data="action_check")],
+            view_contributions_button,
+            [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
+        ]
+        # Filter out empty rows (in case there are no contributions)
+        keyboard = [row for row in keyboard if row]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Save checked value for potential contribution
+        context.user_data['contribute_value'] = text
+        
+        # Log successful check
+        db.log_event("check_success", user.id, {"value": text})
+    else:
+        # Value not found in the whitelist
+        message_text = (
+            f"❌ {user.first_name}, ваше значение НЕ найдено в вайтлисте.\n\n"
+            f"*Значение:* `{text}`\n\n"
+            f"Если вы считаете, что это ошибка, пожалуйста, свяжитесь с администратором."
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("🔍 Проверить другое значение", callback_data="action_check")],
+            [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-
-        # Prepare response message
-        if result.get("found", False):
-            message_text = (
-                f"✅ {user.first_name}, ваше значение найдено в вайтлисте!\n\n"
-                f"*Значение:* `{value}`\n"
-                f"*Тип WL:* {result.get('wl_type', 'Не указан')}\n"
-                f"*Причина:* {result.get('wl_reason', 'Не указана')}"
-            )
-        else:
-            message_text = (
-                f"❌ {
-                    user.first_name}, к сожалению, значение `{value}` не найдено в вайтлисте.\n\n"
-                f"Мы с нетерпением ждем вашего вклада в проект. "
-                f"Следите за анонсами в наших социальных сетях, чтобы узнать о новых возможностях попасть в вайтлист!"
-            )
-
-        # Try to delete the user's message for cleaner interface
-        try:
-            await update.message.delete()
-        except Exception as e:
-            logger.warning(
-                f"Не удалось удалить сообщение пользователя: {e}")
-
-        # Send a new message with the result
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=message_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-
-    except Exception as e:
-        logger.error(
-            f"Ошибка при проверке значения в базе данных: {e}")
-        await update.message.reply_text(
-            "⚠️ Произошла ошибка при проверке. Пожалуйста, попробуйте еще раз или обратитесь к администратору.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton(
-                    "🏠 Главное меню", callback_data="back_to_main")
-            ]])
-        )
-
-        # Reset the conversation state for this user
-        # Now the user can go in different directions based on buttons
-        # or start a new check by sending another message
-        return ConversationHandler.END
+        
+        # Log failed check
+        db.log_event("check_fail", user.id, {"value": text})
+    
+    await update.message.reply_text(
+        message_text,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+    
+    return ConversationHandler.END
 
 
 async def show_admin_menu(
@@ -663,57 +684,69 @@ async def show_add_menu(
         return AWAITING_ADD_VALUE
 
 
-async def handle_add_value(
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Process the value for whitelist and ask for WL type"""
+async def handle_add_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle the value provided for adding to whitelist"""
+    user = update.effective_user
     value = update.message.text.strip()
-
-    # Добавляем логирование
-    logger.debug(
-        f"Получено значение для добавления в базу данных: '{value}'")
-
-    # Сохраняем значение в промежуточных данных
-    context.user_data['add_data'] = {'value': value}
-    logger.debug(
-        f"Установлены данные add_data: {
-            context.user_data['add_data']}")
-
-    # Создаем клавиатуру для выбора типа вайтлиста
+    
+    # Reset the flag
+    if 'expecting_add' in context.user_data:
+        del context.user_data['expecting_add']
+    
+    # Check if input is valid
+    if not value:
+        await update.message.reply_text(
+            "❌ Пожалуйста, введите непустое значение для добавления."
+        )
+        return ConversationHandler.END
+    
+    logger.debug(f"Обработка значения для добавления в базу данных: '{value}' от пользователя {user.id}")
+    
+    # Force database sync before critical operation
+    db.sync()
+    
+    # Check if the value already exists
+    check_result = db.check_whitelist(value)
+    
+    if check_result.get("found", False):
+        # Value already exists
+        message_text = f"❌ Значение '{value}' уже существует в базе данных!"
+        
+        keyboard = [
+            [InlineKeyboardButton("➕ Добавить другое значение", callback_data="admin_add")],
+            [InlineKeyboardButton("🏠 Вернуться в админ-панель", callback_data="menu_admin")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            message_text,
+            reply_markup=reply_markup
+        )
+        return ConversationHandler.END
+    
+    # Store the value for later use
+    context.user_data['add_value'] = value
+    
+    # Ask for whitelist type
+    message_text = (
+        f"Выберите тип вайтлиста для значения '{value}':"
+    )
+    
+    # Create buttons for whitelist types
     keyboard = []
     for wl_type in WL_TYPES:
-        keyboard.append([InlineKeyboardButton(
-            wl_type, callback_data=f"wl_type_{wl_type}")])
-    keyboard.append([InlineKeyboardButton(
-        "◀️ Отмена", callback_data="menu_admin")])
+        keyboard.append([InlineKeyboardButton(wl_type, callback_data=f"wl_type_{wl_type}")])
+    
+    # Add a cancel button
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="menu_admin")])
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
-
-    # Отправляем запрос на выбор типа вайтлиста
-    message_text = (
-        f"Значение для добавления: *{value}*\n\n"
-        f"Выберите тип вайтлиста:"
-    )
-
-    # Удаляем сообщение пользователя
-    try:
-        await context.bot.delete_message(
-            chat_id=update.message.chat_id,
-            message_id=update.message.message_id
-        )
-    except Exception as e:
-        logger.debug(f"Could not delete user message: {e}")
-
-    # Отправляем сообщение с кнопками для выбора типа
-    await update_or_send_message(
-        update,
-        context,
+    
+    await update.message.reply_text(
         message_text,
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
+        reply_markup=reply_markup
     )
-
-    logger.debug(
-        f"Переход в состояние AWAITING_WL_TYPE ({AWAITING_WL_TYPE})")
+    
     return AWAITING_WL_TYPE
 
 
@@ -2513,154 +2546,144 @@ async def handle_contribution_description(update: Update, context: ContextTypes.
     return ConversationHandler.END
 
 def main() -> None:
-        """Start the bot"""
-        # Get the bot token from environment variables
-        token = os.getenv("BOT_TOKEN")
-        if not token:
-            logger.error("No BOT_TOKEN found in environment variables!")
-            return
+    """Start the bot"""
+    # Get the bot token from environment variables
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        logger.error("No BOT_TOKEN found in environment variables!")
+        return
 
-        # Initialize database
-        try:
-            logger.info("Initializing database...")
-            global db
-            db = Database()
-            logger.info("Database initialized successfully")
-        except Exception as e:
-            logger.error(f"Error initializing database: {e}")
-            return
-
-        # Set higher persistence and stability options
-        # Не используем параметр disable_web_page_preview в Defaults
-        defaults = Defaults(
-            parse_mode='Markdown',
-            allow_sending_without_reply=True,
-            tzinfo=timezone.utc
-        )
-        
-        # Create the Application with persistence
-        persistence = PicklePersistence(filepath="bot_data")
-        
-        # Создаем приложение без использования rate_limiter с проблемными параметрами
-        application = (
-            Application.builder()
-            .token(token)
-            .defaults(defaults)
-            .persistence(persistence)
-            .build()
-        )
-        
-        # Setup bot commands and description on startup
-        application.post_init = setup_commands
-        
-        # Command handlers
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("menu", menu_command))
-        application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("stats", stats_command))
-        application.add_handler(CommandHandler("broadcast", broadcast_command))
-        application.add_handler(CommandHandler("admin", show_admin_menu))
-        application.add_handler(CommandHandler("export", export_command))
-        application.add_handler(CommandHandler("import", import_command))
-        application.add_handler(CommandHandler("check", show_check_menu))
-        application.add_handler(CommandHandler("contribute", show_contribute_menu))
-        
-        # Add conversation handlers
-        
-        # Add conversation handler for contributions
-        contribution_conv_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler("contribute", show_contribute_menu),
-                CallbackQueryHandler(start_add_contribution, pattern="^add_contribution$")
-            ],
-            states={
-                AWAITING_CONTRIBUTE_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_contribution_link)],
-                AWAITING_CONTRIBUTE_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_contribution_description)]
-            },
-            fallbacks=[CallbackQueryHandler(show_contributions_menu, pattern="^view_contribute$")],
-            name="contribution_conversation",
-            persistent=True
-        )
-        application.add_handler(contribution_conv_handler)
-        
-        # Add conversation handler for check
-        check_conv_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler("check", show_check_menu),
-                CallbackQueryHandler(show_check_menu, pattern="^action_check$")
-            ],
-            states={
-                AWAITING_CHECK_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_check_value)]
-            },
-            fallbacks=[CallbackQueryHandler(button_callback)],
-            name="check_conversation",
-            persistent=False,
-            per_chat=True
-        )
-        application.add_handler(check_conv_handler)
-        
-        # Add conversation handler for adding values
-        add_conv_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler("add", show_add_menu),
-                CallbackQueryHandler(show_add_menu, pattern="^admin_add$")
-            ],
-            states={
-                AWAITING_ADD_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_value)],
-                AWAITING_WL_TYPE: [CallbackQueryHandler(handle_wl_type, pattern="^wl_type_")],
-                AWAITING_WL_REASON: [CallbackQueryHandler(handle_wl_reason, pattern="^wl_reason_")]
-            },
-            fallbacks=[CallbackQueryHandler(button_callback)],
-            name="add_conversation",
-            persistent=False,
-            per_chat=True
-        )
-        application.add_handler(add_conv_handler)
-        
-        # Add conversation handler for removing values
-        remove_conv_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler("remove", show_remove_menu),
-                CallbackQueryHandler(show_remove_menu, pattern="^admin_remove$")
-            ],
-            states={
-                AWAITING_REMOVE_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_value)]
-            },
-            fallbacks=[CallbackQueryHandler(button_callback)],
-            name="remove_conversation",
-            persistent=False,
-            per_chat=True
-        )
-        application.add_handler(remove_conv_handler)
-        
-        # Add conversation handler for broadcasting messages
-        broadcast_conv_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler("broadcast", broadcast_command),
-                CallbackQueryHandler(show_broadcast_menu, pattern="^admin_broadcast$")
-            ],
-            states={
-                BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message)]
-            },
-            fallbacks=[CallbackQueryHandler(button_callback)],
-            name="broadcast_conversation",
-            persistent=False,
-            per_chat=True
-        )
-        application.add_handler(broadcast_conv_handler)
-        
-        # Add handler for document uploads (for import)
-        application.add_handler(MessageHandler(filters.Document.ALL, handle_import_file))
-        
-        # Add callback query handler - перемещено после ConversationHandler, но перед MessageHandler
-        application.add_handler(CallbackQueryHandler(button_callback))
-        
-        # Add message handler to catch all unhandled messages
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        
-        # Start the Bot
-        logger.info("Starting the bot...")
-        application.run_polling()
+    # Set higher persistence and stability options
+    # Не используем параметр disable_web_page_preview в Defaults
+    defaults = Defaults(
+        parse_mode='Markdown',
+        allow_sending_without_reply=True,
+        tzinfo=timezone.utc
+    )
+    
+    # Create the Application with persistence
+    persistence = PicklePersistence(filepath="bot_data")
+    
+    # Создаем приложение без использования rate_limiter с проблемными параметрами
+    application = (
+        Application.builder()
+        .token(token)
+        .defaults(defaults)
+        .persistence(persistence)
+        .build()
+    )
+    
+    # Setup bot commands and description on startup
+    application.post_init = setup_commands
+    
+    # Command handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("menu", menu_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("broadcast", broadcast_command))
+    application.add_handler(CommandHandler("admin", show_admin_menu))
+    application.add_handler(CommandHandler("export", export_command))
+    application.add_handler(CommandHandler("import", import_command))
+    application.add_handler(CommandHandler("check", show_check_menu))
+    application.add_handler(CommandHandler("contribute", show_contribute_menu))
+    
+    # Add conversation handlers
+    
+    # Add conversation handler for contributions
+    contribution_conv_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("contribute", show_contribute_menu),
+            CallbackQueryHandler(start_add_contribution, pattern="^add_contribution$")
+        ],
+        states={
+            AWAITING_CONTRIBUTE_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_contribution_link)],
+            AWAITING_CONTRIBUTE_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_contribution_description)]
+        },
+        fallbacks=[CallbackQueryHandler(show_contributions_menu, pattern="^view_contribute$")],
+        name="contribution_conversation",
+        persistent=True
+    )
+    application.add_handler(contribution_conv_handler)
+    
+    # Add conversation handler for check
+    check_conv_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("check", show_check_menu),
+            CallbackQueryHandler(show_check_menu, pattern="^action_check$")
+        ],
+        states={
+            AWAITING_CHECK_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_check_value)]
+        },
+        fallbacks=[CallbackQueryHandler(button_callback)],
+        name="check_conversation",
+        persistent=False,
+        per_chat=True
+    )
+    application.add_handler(check_conv_handler)
+    
+    # Add conversation handler for adding values
+    add_conv_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("add", show_add_menu),
+            CallbackQueryHandler(show_add_menu, pattern="^admin_add$")
+        ],
+        states={
+            AWAITING_ADD_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_value)],
+            AWAITING_WL_TYPE: [CallbackQueryHandler(handle_wl_type, pattern="^wl_type_")],
+            AWAITING_WL_REASON: [CallbackQueryHandler(handle_wl_reason, pattern="^wl_reason_")]
+        },
+        fallbacks=[CallbackQueryHandler(button_callback)],
+        name="add_conversation",
+        persistent=False,
+        per_chat=True
+    )
+    application.add_handler(add_conv_handler)
+    
+    # Add conversation handler for removing values
+    remove_conv_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("remove", show_remove_menu),
+            CallbackQueryHandler(show_remove_menu, pattern="^admin_remove$")
+        ],
+        states={
+            AWAITING_REMOVE_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_value)]
+        },
+        fallbacks=[CallbackQueryHandler(button_callback)],
+        name="remove_conversation",
+        persistent=False,
+        per_chat=True
+    )
+    application.add_handler(remove_conv_handler)
+    
+    # Add conversation handler for broadcasting messages
+    broadcast_conv_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("broadcast", broadcast_command),
+            CallbackQueryHandler(show_broadcast_menu, pattern="^admin_broadcast$")
+        ],
+        states={
+            BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message)]
+        },
+        fallbacks=[CallbackQueryHandler(button_callback)],
+        name="broadcast_conversation",
+        persistent=False,
+        per_chat=True
+    )
+    application.add_handler(broadcast_conv_handler)
+    
+    # Add handler for document uploads (for import)
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_import_file))
+    
+    # Add callback query handler - перемещено после ConversationHandler, но перед MessageHandler
+    application.add_handler(CallbackQueryHandler(button_callback))
+    
+    # Add message handler to catch all unhandled messages
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Start the Bot
+    logger.info("Starting the bot...")
+    application.run_polling()
 
 
 
