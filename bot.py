@@ -71,9 +71,146 @@ ACTIVE_MESSAGE_KEY = 'active_message'
 # Ключ для хранения ID активного сообщения бота
 BOT_ACTIVE_MESSAGE_KEY = 'active_bot_message'
 
+# Вспомогательная функция для получения chat_id из объекта update
+def chat_id_from_update(update: Update) -> int:
+    """Extract chat ID from an update object"""
+    if update.effective_chat:
+        return update.effective_chat.id
+    elif update.callback_query and update.callback_query.message:
+        return update.callback_query.message.chat_id
+    elif update.message:
+        return update.message.chat_id
+    else:
+        # Fallback - should not happen in normal operation
+        return 0
+
+# Функция для удаления сообщения пользователя и обновления сообщения бота
+async def delete_and_update_message(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        text: str,
+        reply_markup=None,
+        parse_mode=None
+) -> None:
+    """Delete user message and update the single bot message or send a new one"""
+    # Try to delete the user's message if possible
+    if update.message:
+        try:
+            await context.bot.delete_message(
+                chat_id=update.message.chat_id,
+                message_id=update.message.message_id
+            )
+        except Exception as e:
+            logger.debug(f"Could not delete user message: {e}")
+
+    # Then update the bot's single message
+    await update_or_send_message(update, context, text, reply_markup, parse_mode)
+
+# Функция для сохранения активного сообщения
+async def save_active_message(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        message) -> None:
+    """Save the active message ID for a user to enable in-place updates"""
+    context.user_data[ACTIVE_MESSAGE_KEY] = (
+        message.chat_id, message.message_id)
+
+# Функция для обновления существующего сообщения или отправки нового
+async def update_or_send_message(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        text: str,
+        reply_markup=None,
+        parse_mode=None
+) -> None:
+    """Update existing message or send a new one for clean interface"""
+    # If this is a callback query, try to edit the message
+    if update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+            return
+        except Exception as e:
+            logger.debug(f"Could not edit callback query message: {e}")
+
+    # If we have an active message ID for this chat, try to edit it
+    chat_id = chat_id_from_update(update)
+    if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
+        active_message_id = context.chat_data[BOT_ACTIVE_MESSAGE_KEY]
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=active_message_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+            return
+        except Exception as e:
+            logger.debug(
+                f"Could not edit active message {active_message_id}: {e}")
+
+    # If we couldn't edit, send a new message
+    if update.message:
+        message = await update.message.reply_text(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode
+        )
+    else:
+        message = await context.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode
+        )
+
+    # Store the message ID as the active one for this chat
+    context.chat_data[BOT_ACTIVE_MESSAGE_KEY] = message.message_id
+
+# Функция для очистки старых сообщений бота
+async def clean_old_bot_messages(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clean up old bot messages to keep chat clean, except the active message"""
+    chat_id = chat_id_from_update(update)
+
+    # If we have an active message, keep track of it
+    active_message_id = None
+    if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
+        active_message_id = context.chat_data[BOT_ACTIVE_MESSAGE_KEY]
+
+    # Try to get recent messages to delete old ones
+    try:
+        # We can only delete recent messages that the bot sent
+        # We'll use getUpdates with a limit to avoid excessive API calls
+        # This is an approximation as getUpdates has limitations
+        recent_updates = await context.bot.get_updates(limit=10, timeout=0)
+
+        # Find messages from this bot in this chat
+        bot_id = context.bot.id
+        for bot_update in recent_updates:
+            if (bot_update.message and
+                bot_update.message.from_user and
+                bot_update.message.from_user.id == bot_id and
+                bot_update.message.chat_id == chat_id and
+                (active_message_id is None or bot_update.message.message_id != active_message_id)):
+
+                # Try to delete this old message
+                try:
+                    await context.bot.delete_message(
+                        chat_id=chat_id,
+                        message_id=bot_update.message.message_id
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not delete old bot message: {e}")
+    except Exception as e:
+        logger.debug(f"Error getting updates to clean messages: {e}")
+
 # Декоратор для измерения скорости выполнения функций
-
-
 def measure_time(func):
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
@@ -1299,149 +1436,6 @@ async def show_persistent_keyboard(
 
     # Add function to delete user message and update or send
     # message
-
-
-    async def delete_and_update_message(
-            update: Update,
-            context: ContextTypes.DEFAULT_TYPE,
-            text: str,
-            reply_markup=None,
-            parse_mode=None
-    ) -> None:
-        """Delete user message and update the single bot message or send a new one"""
-        # Try to delete the user's message if possible
-        if update.message:
-            try:
-                await context.bot.delete_message(
-                    chat_id=update.message.chat_id,
-                    message_id=update.message.message_id
-                )
-            except Exception as e:
-                logger.debug(f"Could not delete user message: {e}")
-
-        # Then update the bot's single message
-        await update_or_send_message(update, context, text, reply_markup, parse_mode)
-
-    # Add function to save active message
-
-
-    async def save_active_message(
-            update: Update,
-            context: ContextTypes.DEFAULT_TYPE,
-            message) -> None:
-        """Save the active message ID for a user to enable in-place updates"""
-        context.user_data[ACTIVE_MESSAGE_KEY] = (
-            message.chat_id, message.message_id)
-
-    # Add function to update or send message
-
-
-    async def update_or_send_message(
-            update: Update,
-            context: ContextTypes.DEFAULT_TYPE,
-            text: str,
-            reply_markup=None,
-            parse_mode=None
-    ) -> None:
-        """Update existing message or send a new one for clean interface"""
-        # If this is a callback query, try to edit the message
-        if update.callback_query:
-            try:
-                await update.callback_query.edit_message_text(
-                    text=text,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode
-                )
-                return
-            except Exception as e:
-                logger.debug(f"Could not edit callback query message: {e}")
-
-        # If we have an active message ID for this chat, try to edit it
-        chat_id = chat_id_from_update(update)
-        if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
-            active_message_id = context.chat_data[BOT_ACTIVE_MESSAGE_KEY]
-            try:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=active_message_id,
-                    text=text,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode
-                )
-                return
-            except Exception as e:
-                logger.debug(
-                    f"Could not edit active message {active_message_id}: {e}")
-
-        # If we couldn't edit, send a new message
-        if update.message:
-            message = await update.message.reply_text(
-                text=text,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode
-            )
-        else:
-            message = await context.bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode
-            )
-
-        # Store the message ID as the active one for this chat
-        context.chat_data[BOT_ACTIVE_MESSAGE_KEY] = message.message_id
-
-
-    async def clean_old_bot_messages(
-            update: Update,
-            context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Clean up old bot messages to keep chat clean, except the active message"""
-        chat_id = chat_id_from_update(update)
-
-        # If we have an active message, keep track of it
-        active_message_id = None
-        if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
-            active_message_id = context.chat_data[BOT_ACTIVE_MESSAGE_KEY]
-
-        # Try to get recent messages to delete old ones
-        try:
-            # We can only delete recent messages that the bot sent
-            # We'll use getUpdates with a limit to avoid excessive API calls
-            # This is an approximation as getUpdates has limitations
-            recent_updates = await context.bot.get_updates(limit=10, timeout=0)
-
-            # Find messages from this bot in this chat
-            bot_id = context.bot.id
-            for bot_update in recent_updates:
-                if (bot_update.message and
-                    bot_update.message.from_user and
-                    bot_update.message.from_user.id == bot_id and
-                    bot_update.message.chat_id == chat_id and
-                    (active_message_id is None or bot_update.message.message_id != active_message_id)):
-
-                    # Try to delete this old message
-                    try:
-                        await context.bot.delete_message(
-                            chat_id=chat_id,
-                            message_id=bot_update.message.message_id
-                        )
-                    except Exception as e:
-                        logger.debug(f"Could not delete old bot message: {e}")
-        except Exception as e:
-            logger.debug(f"Error getting updates to clean messages: {e}")
-
-
-    def chat_id_from_update(update: Update) -> int:
-        """Extract chat ID from an update object"""
-        if update.effective_chat:
-            return update.effective_chat.id
-        elif update.callback_query and update.callback_query.message:
-            return update.callback_query.message.chat_id
-        elif update.message:
-            return update.message.chat_id
-        else:
-            # Fallback - should not happen in normal operation
-            return 0
 
 
     async def handle_message(
