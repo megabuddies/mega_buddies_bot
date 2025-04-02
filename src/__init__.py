@@ -1,0 +1,1 @@
+# MegaBuddies Whitelist Bot package 

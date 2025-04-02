@@ -1,74 +1,118 @@
-# MegaBuddies Telegram Bot
+# MegaBuddies Whitelist Bot
 
-Телеграм-бот для проверки наличия пользователей в базе данных и массовой рассылки сообщений.
+Telegram bot for managing and verifying entries in a whitelist for MegaBuddies project.
 
-## Возможности
+## Features
 
-- Проверка введенной пользователем информации на наличие в базе данных (вайтлисте)
-- Регистрация всех пользователей, которые взаимодействуют с ботом
-- Массовая рассылка сообщений всем пользователям бота
-- Администраторские команды для управления базой данных
+- ✅ Check if an address/value is in the whitelist
+- 👥 User account tracking and statistics
+- 📊 Admin dashboard with usage metrics
+- 📝 Whitelist management (add, remove, list entries)
+- 📤 Export whitelist to CSV
+- 📥 Import whitelist from CSV
+- 📢 Broadcast messages to all users
 
-## Установка и настройка
+## Project Structure
 
-1. Клонируйте репозиторий:
+The project is organized with a modular architecture:
+
+```
+mega_buddies_bot/
+├── main.py              # Main entry point and app setup
+├── requirements.txt     # Dependencies
+├── .env                 # Environment variables (private)
+├── .env.example         # Example environment config
+├── src/                 # Source code
+│   ├── database/        # Database operations
+│   │   ├── __init__.py
+│   │   └── db.py        # Database class with async operations
+│   ├── handlers/        # Bot command handlers
+│   │   ├── __init__.py
+│   │   ├── basic.py     # Basic commands (start, help, menu)
+│   │   ├── whitelist.py # Whitelist operations (check, add, remove)
+│   │   └── admin.py     # Admin operations (stats, broadcast)
+│   └── utils/           # Utilities
+│       ├── __init__.py
+│       └── helpers.py   # Helper functions
+└── mega_buddies.db      # SQLite database
+```
+
+## Installation
+
+1. Clone the repository:
 ```
 git clone https://github.com/yourusername/mega_buddies_bot.git
 cd mega_buddies_bot
 ```
 
-2. Установите зависимости:
+2. Install dependencies:
 ```
 pip install -r requirements.txt
 ```
 
-3. Создайте файл `.env` на основе примера:
+3. Configure the bot:
+- Copy `.env.example` to `.env`
+- Add your Telegram Bot Token to `.env`:
 ```
-cp .env.example .env
-```
-
-4. Отредактируйте файл `.env`, добавив токен вашего бота:
-```
-BOT_TOKEN=your_telegram_bot_token_here
+BOT_TOKEN=your_bot_token_here
 ```
 
-Для получения токена бота создайте нового бота через [@BotFather](https://t.me/BotFather) в Telegram.
-
-5. Замените ID администраторов в файле `bot.py`:
-```python
-admin_ids = [123456789]  # Замените на реальные ID администраторов
+4. Run the bot:
+```
+python main.py
 ```
 
-## Запуск бота
+## Bot Commands
 
-```
-python bot.py
-```
+- `/start` - Start the bot and see main menu
+- `/help` - Show help information
+- `/menu` - Display main menu
+- `/check` - Check a value against the whitelist
+- `/admin` - Access admin panel (admin only)
+- `/stats` - Show bot statistics (admin only)
+- `/add` - Add a value to the whitelist (admin only)
+- `/remove` - Remove a value from the whitelist (admin only)
+- `/list` - List all values in the whitelist (admin only)
+- `/broadcast` - Send a message to all users (admin only)
+- `/export` - Export whitelist to CSV (admin only)
+- `/import` - Import whitelist from CSV (admin only)
 
-## Административный интерфейс
+## Technical Details
 
-Для управления базой данных можно использовать утилиту командной строки:
+- Built with python-telegram-bot 20.8
+- Uses SQLite database with aiosqlite for async operations
+- Implements proper error handling and logging
+- Follows separation of concerns with modular architecture
+- Fully asynchronous using Python's asyncio
 
-```
-# Добавить значение в вайтлист
-python admin_tools.py add <значение>
+## Security
 
-# Удалить значение из вайтлиста
-python admin_tools.py remove <значение>
+- Admin functionality is restricted to authorized user IDs
+- Environment variables used for sensitive data
+- Input validation for all user-provided values
 
-# Показать все значения в вайтлисте
-python admin_tools.py list
-```
+## License
 
-## Доступные команды в боте
+This project is licensed under the MIT License - see the LICENSE file for details. 
+- `/list` - List all values in the whitelist (admin only)
+- `/broadcast` - Send a message to all users (admin only)
+- `/export` - Export whitelist to CSV (admin only)
+- `/import` - Import whitelist from CSV (admin only)
 
-### Для всех пользователей:
-- `/start` - Начать работу с ботом
-- `/help` - Показать справку по командам
-- `/check <значение>` - Проверить значение в базе данных
+## Technical Details
 
-### Только для администраторов:
-- `/add <значение>` - Добавить значение в базу данных
-- `/remove <значение>` - Удалить значение из базы данных
-- `/list` - Показать все значения в базе данных
-- `/broadcast <сообщение>` - Отправить сообщение всем пользователям 
+- Built with python-telegram-bot 20.8
+- Uses SQLite database with aiosqlite for async operations
+- Implements proper error handling and logging
+- Follows separation of concerns with modular architecture
+- Fully asynchronous using Python's asyncio
+
+## Security
+
+- Admin functionality is restricted to authorized user IDs
+- Environment variables used for sensitive data
+- Input validation for all user-provided values
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details. 
