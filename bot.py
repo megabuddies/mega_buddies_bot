@@ -2380,3 +2380,241 @@ async def show_persistent_keyboard(
 
     if __name__ == "__main__":
         main()
+
+# Add contribution-related functions
+async def show_contribute_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Show menu for contributing a value"""
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    message_text = "Введите значение, для которого вы хотите внести свой вклад:"
+    
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text(
+            message_text,
+            reply_markup=reply_markup
+        )
+    else:
+        await update.message.reply_text(
+            message_text,
+            reply_markup=reply_markup
+        )
+    
+    # Set flag to know that next message is for contribution
+    context.user_data['expecting_contribute'] = True
+    
+    # Clear active message to avoid editing it
+    if BOT_ACTIVE_MESSAGE_KEY in context.chat_data:
+        del context.chat_data[BOT_ACTIVE_MESSAGE_KEY]
+    
+    return AWAITING_CONTRIBUTE_VALUE
+
+async def handle_contribute_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle the value provided for contribution"""
+    user = update.effective_user
+    value = update.message.text.strip()
+    
+    logger.debug(f"Обработка значения для вклада: '{value}' от пользователя {user.id}")
+    
+    # Save the value for later use
+    context.user_data['contribute_value'] = value
+    
+    # Check if the value exists in the database
+    result = db.check_whitelist(value)
+    
+    # Create reply markup with buttons
+    if result.get("found", False):
+        # Value exists, show appropriate message and options
+        contributions = db.get_user_contributions(value)
+        
+        message_text = (
+            f"✅ {user.first_name}, ваше значение найдено в вайтлисте!\n\n"
+            f"*Значение:* `{value}`\n"
+        )
+        
+        if contributions:
+            message_text += f"Для этого значения уже есть {len(contributions)} вкладов.\n\n"
+        else:
+            message_text += "Для этого значения еще нет вкладов.\n\n"
+            
+        keyboard = [
+            [InlineKeyboardButton("📋 Посмотреть/Внести вклад", callback_data="view_contribute")],
+            [InlineKeyboardButton("🔍 Проверить другое значение", callback_data="action_contribute")],
+            [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
+        ]
+    else:
+        # Value doesn't exist, inform user
+        message_text = (
+            f"❌ {user.first_name}, ваше значение не найдено в вайтлисте.\n\n"
+            f"Для внесения вклада значение должно быть в базе данных."
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("🔍 Проверить другое значение", callback_data="action_contribute")],
+            [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
+        ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        message_text,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+    
+    # Reset flag
+    if 'expecting_contribute' in context.user_data:
+        del context.user_data['expecting_contribute']
+    
+    return ConversationHandler.END
+
+async def show_contributions_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show all contributions for a value and option to add new one"""
+    query = update.callback_query
+    await query.answer()
+    
+    user = update.effective_user
+    value = context.user_data.get('contribute_value', '')
+    
+    if not value:
+        await query.edit_message_text(
+            "Ошибка: значение не найдено. Попробуйте снова.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")
+            ]])
+        )
+        return
+    
+    # Get all contributions for this value
+    contributions = db.get_user_contributions(value)
+    
+    # Prepare message text
+    if contributions:
+        message_text = f"📋 Вклады для значения *{value}*:\n\n"
+        for idx, contrib in enumerate(contributions, 1):
+            message_text += (
+                f"{idx}. [{contrib['description']}]({contrib['link']})\n"
+                f"   _Добавлено: {contrib['timestamp']}_\n\n"
+            )
+    else:
+        message_text = f"📋 Для значения *{value}* еще нет вкладов.\n\n"
+    
+    # Add buttons
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить новый вклад", callback_data="add_contribution")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="action_contribute")],
+        [InlineKeyboardButton("🏠 В главное меню", callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        message_text,
+        reply_markup=reply_markup,
+        parse_mode='Markdown',
+        disable_web_page_preview=True
+    )
+
+async def start_add_contribution(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start the process of adding a new contribution"""
+    query = update.callback_query
+    await query.answer()
+    
+    message_text = (
+        "🔗 Отправьте ссылку для вашего вклада.\n\n"
+        "Это может быть ссылка на статью, видео, инструкцию или другой полезный ресурс."
+    )
+    
+    keyboard = [[InlineKeyboardButton("◀️ Отмена", callback_data="view_contribute")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        message_text,
+        reply_markup=reply_markup
+    )
+    
+    return AWAITING_CONTRIBUTE_LINK
+
+async def handle_contribution_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle the link for a contribution"""
+    user = update.effective_user
+    link = update.message.text.strip()
+    
+    # Simple validation - check if it starts with http:// or https://
+    if not (link.startswith("http://") or link.startswith("https://")):
+        await update.message.reply_text(
+            "❌ Пожалуйста, введите действительную ссылку, начинающуюся с http:// или https://",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Отмена", callback_data="view_contribute")
+            ]])
+        )
+        return AWAITING_CONTRIBUTE_LINK
+    
+    # Save link for later
+    context.user_data['contribute_link'] = link
+    
+    # Ask for description
+    message_text = (
+        "📝 Теперь отправьте краткое описание вашего вклада.\n\n"
+        "Опишите, что содержится по данной ссылке и чем она может быть полезна."
+    )
+    
+    keyboard = [[InlineKeyboardButton("◀️ Отмена", callback_data="view_contribute")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        message_text,
+        reply_markup=reply_markup
+    )
+    
+    return AWAITING_CONTRIBUTE_DESCRIPTION
+
+async def handle_contribution_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle the description and save the contribution"""
+    user = update.effective_user
+    description = update.message.text.strip()
+    
+    # Retrieve saved values
+    value = context.user_data.get('contribute_value', '')
+    link = context.user_data.get('contribute_link', '')
+    
+    if not value or not link:
+        await update.message.reply_text(
+            "❌ Ошибка при сохранении вклада. Пожалуйста, попробуйте снова.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")
+            ]])
+        )
+        return ConversationHandler.END
+    
+    # Save contribution to database
+    success = db.add_contribution(user.id, value, link, description)
+    
+    if success:
+        # Clear saved data
+        for key in ['contribute_value', 'contribute_link']:
+            if key in context.user_data:
+                del context.user_data[key]
+        
+        keyboard = [
+            [InlineKeyboardButton("📋 Просмотреть все вклады", callback_data="view_contribute")],
+            [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            "✅ Ваш вклад успешно сохранен!\n\n"
+            "Благодарим за вашу помощь сообществу.",
+            reply_markup=reply_markup
+        )
+    else:
+        keyboard = [[InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_main")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            "❌ Произошла ошибка при сохранении вклада. Пожалуйста, попробуйте позже.",
+            reply_markup=reply_markup
+        )
+    
+    return ConversationHandler.END
