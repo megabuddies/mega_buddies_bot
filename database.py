@@ -55,6 +55,19 @@ class Database:
         )
         ''')
         
+        # Create contributions table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS contributions (
+            id INTEGER PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            user_value TEXT NOT NULL,
+            link TEXT NOT NULL,
+            description TEXT NOT NULL,
+            timestamp TIMESTAMP DEFAULT (datetime('now')),
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+        ''')
+        
         conn.commit()
         conn.close()
     
@@ -117,6 +130,28 @@ class Database:
                 print("Added wl_reason column successfully")
             except Exception as e:
                 print(f"Error adding wl_reason column: {e}")
+                conn.rollback()
+        
+        # Check if contributions table exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='contributions'")
+        if not cursor.fetchone():
+            print("Migrating database: Creating contributions table")
+            try:
+                cursor.execute('''
+                CREATE TABLE IF NOT EXISTS contributions (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    user_value TEXT NOT NULL,
+                    link TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    timestamp TIMESTAMP DEFAULT (datetime('now')),
+                    FOREIGN KEY (user_id) REFERENCES users (user_id)
+                )
+                ''')
+                conn.commit()
+                print("Created contributions table successfully")
+            except Exception as e:
+                print(f"Error creating contributions table: {e}")
                 conn.rollback()
         
         conn.close()
@@ -538,4 +573,50 @@ class Database:
                 conn.close()
         except Exception as e:
             print(f"Database error: {e}")
-            return None 
+            return None
+
+    # Methods for handling contributions
+    def add_contribution(self, user_id: int, user_value: str, link: str, description: str) -> bool:
+        """Add a contribution for a user"""
+        try:
+            query = """
+                INSERT INTO contributions 
+                (user_id, user_value, link, description) 
+                VALUES (?, ?, ?, ?)
+            """
+            self._execute_query(query, (user_id, user_value, link, description))
+            
+            # Log contribution event
+            self.log_event("add_contribution", user_id, {"value": user_value, "link": link}, True)
+            
+            return True
+        except Exception as e:
+            print(f"Error adding contribution: {e}")
+            return False
+    
+    def get_user_contributions(self, user_value: str) -> List[Dict[str, Any]]:
+        """Get all contributions for a specific user value"""
+        try:
+            query = """
+                SELECT id, user_id, user_value, link, description, timestamp 
+                FROM contributions 
+                WHERE user_value = ?
+                ORDER BY timestamp DESC
+            """
+            rows = self._execute_query(query, (user_value,), fetch_all=True)
+            
+            contributions = []
+            for row in rows:
+                contributions.append({
+                    "id": row[0],
+                    "user_id": row[1],
+                    "user_value": row[2],
+                    "link": row[3],
+                    "description": row[4],
+                    "timestamp": row[5]
+                })
+            
+            return contributions
+        except Exception as e:
+            print(f"Error getting user contributions: {e}")
+            return [] 
