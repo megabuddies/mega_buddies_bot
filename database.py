@@ -239,9 +239,26 @@ class Database:
             return self._cache['whitelist'][cache_key]
         
         try:
+            # Логируем входящее значение для диагностики
+            print(f"Checking whitelist for value: '{value}'")
+            
             # Если нет в кэше, проверяем в базе
+            # Попробуем сначала точное совпадение
             query = "SELECT id, value, wl_type, wl_reason FROM whitelist WHERE value = ?"
             row = self._execute_query(query, (value,), fetch_one=True)
+            
+            if not row:
+                # Если точное совпадение не найдено, попробуем сравнение без учета регистра
+                query = "SELECT id, value, wl_type, wl_reason FROM whitelist WHERE LOWER(value) = LOWER(?)"
+                row = self._execute_query(query, (value,), fetch_one=True)
+            
+            if not row:
+                # Выведем все записи из whitelist для диагностики
+                debug_query = "SELECT id, value FROM whitelist"
+                debug_rows = self._execute_query(debug_query, fetch_all=True)
+                print(f"Database contains {len(debug_rows)} records:")
+                for r in debug_rows:
+                    print(f"  ID: {r[0]}, Value: '{r[1]}'")
             
             if row:
                 result = {
@@ -251,8 +268,10 @@ class Database:
                     "wl_type": row[2],
                     "wl_reason": row[3]
                 }
+                print(f"Found match in database: {result}")
             else:
                 result = {"found": False}
+                print(f"No match found in database for '{value}'")
             
             # Сохраняем в кэш
             self._cache['whitelist'][cache_key] = result
