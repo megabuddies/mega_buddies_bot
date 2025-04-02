@@ -2171,76 +2171,60 @@ async def show_persistent_keyboard(
             if update and isinstance(
                     update, Update) and update.effective_message:
                 # Only send error to chat if it's a known error for user input
-                if isinstance(
-                        context.error,
-                        (ValueError,
-                         KeyError,
-                         IndexError)):
+                context_error = context.error
+                if isinstance(context_error, (ValueError, KeyError)):
                     await update.effective_message.reply_text(
-                        "⚠️ Произошла ошибка при обработке вашего запроса. "
-                        "Пожалуйста, проверьте ввод и попробуйте снова.",
-                        disable_web_page_preview=True
-                    )
-                else:
-                    # For any other errors, send generic message to user
-                    await update.effective_message.reply_text(
-                        "🛑 Произошла внутренняя ошибка. Администраторы уведомлены. "
-                        "Пожалуйста, попробуйте позже или обратитесь к администратору.",
-                        disable_web_page_preview=True
-                    )
+                        "Неверный формат ввода. Пожалуйста, попробуйте еще раз.")
+                    return
 
-                # Try to restore the conversation state if needed
-                if context.user_data.get('expecting_add') or
+            # Log the error
+            logger.error(f"Exception while handling an update: {context.error}")
+
+            # Trace back the error
+            import traceback
+            tb_list = traceback.format_exception(
+                None, context.error, context.error.__traceback__)
+            tb_string = ''.join(tb_list)
+            logger.error(f"Exception traceback:\n{tb_string}")
+
+            # Try to restore the conversation state if needed
+            if (context.user_data.get('expecting_add') or
                 context.user_data.get('expecting_remove') or
                 context.user_data.get('expecting_check') or
                 context.user_data.get('expecting_broadcast') or
-                context.user_data.get('expecting_import_file'):
+                context.user_data.get('expecting_import_file')):
 
-                    # Reset all conversation flags
-                    context.user_data['expecting_add'] = False
-                    context.user_data['expecting_remove'] = False
-                    context.user_data['expecting_check'] = False
-                    context.user_data['expecting_broadcast'] = False
-                    context.user_data['expecting_import_file'] = False
+                # Reset all conversation flags
+                context.user_data['expecting_add'] = False
+                context.user_data['expecting_remove'] = False
+                context.user_data['expecting_check'] = False
+                context.user_data['expecting_broadcast'] = False
+                context.user_data['expecting_import_file'] = False
 
-                    # Clean up any temporary files
-                    if 'import_file_path' in context.user_data:
-                        import os
-                        try:
-                            os.remove(context.user_data['import_file_path'])
-                        except BaseException:
-                            pass
-                        del context.user_data['import_file_path']
+                # Clean up any temporary files
+                if 'import_file_path' in context.user_data:
+                    import os
+                    try:
+                        os.remove(context.user_data['import_file_path'])
+                    except Exception as e:
+                        logger.warning(f"Could not delete temporary file: {e}")
 
-                    logger.warning("Reset conversation state due to error")
-
-                # Log the error
-                logger.error(
-                    f"Update {update} caused error {
-                        context.error}",
-                    exc_info=context.error)
-
-                # Notify admins about critical errors
-                if isinstance(context.error, Exception) and not isinstance(
-                        context.error, (ValueError, KeyError, IndexError)):
-                    for admin_id in ADMIN_IDS:
-                        try:
-                            error_message = (
-                                f"🔴 *Критическая ошибка в боте:*\n\n"
-                                f"```\n{str(context.error)[:200]}...\n```"
-                            )
-
-                            await context.bot.send_message(
-                                chat_id=admin_id,
-                                text=error_message,
-                                parse_mode='Markdown'
-                            )
-                        except BaseException:
-                            logger.error(
-                                f"Failed to notify admin {admin_id} about error")
-                        except Exception as e:
-                            # If even the error handler fails, just log it
-                            logger.critical(f"Error handler failed with {e}", exc_info=e)
+            # Send message to developer/admin
+            for admin_id in ADMIN_IDS:
+                try:
+                    error_message = (
+                        f"🔴 *Критическая ошибка в боте:*\n\n"
+                        f"```\n{str(context.error)[:200]}...\n```"
+                    )
+                    await context.bot.send_message(
+                        chat_id=admin_id,
+                        text=error_message,
+                        parse_mode='Markdown'
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to notify admin {admin_id}: {e}")
+        except Exception as e:
+            logger.error(f"Error in error handler: {e}")
 
 
     def main() -> None:
