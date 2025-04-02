@@ -289,18 +289,27 @@ class Database:
         return count
 
     def add_user(self, user_id: int, username: Optional[str], first_name: str, 
-                 last_name: Optional[str], chat_id: int) -> bool:
+                 last_name: Optional[str], chat_id: Optional[int] = None) -> bool:
         """Add or update a user in the database"""
         try:
             conn = sqlite3.connect(self.db_name)
             cursor = conn.cursor()
             
             # Check if user already exists
-            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+            cursor.execute("SELECT user_id, chat_id FROM users WHERE user_id = ?", (user_id,))
             existing_user = cursor.fetchone()
             
-            if existing_user:
-                # Update existing user's last activity
+            # Если chat_id не указан или -1, но у пользователя уже есть chat_id в базе,
+            # не обновляем его
+            if existing_user and (chat_id is None or chat_id == -1) and existing_user[1] is not None:
+                # Не обновляем chat_id, если он уже существует в базе, а новый - пустой или -1
+                cursor.execute("""
+                    UPDATE users 
+                    SET username = ?, first_name = ?, last_name = ?, last_activity = datetime('now')
+                    WHERE user_id = ?
+                """, (username, first_name, last_name, user_id))
+            elif existing_user:
+                # Update existing user with all fields
                 cursor.execute("""
                     UPDATE users 
                     SET username = ?, first_name = ?, last_name = ?, chat_id = ?, last_activity = datetime('now')
@@ -592,6 +601,19 @@ class Database:
             return True
         except Exception as e:
             print(f"Error adding contribution: {e}")
+            return False
+    
+    def add_user_contribution(self, value: str, user_id: int, username: str, first_name: str, link: str, description: str) -> bool:
+        """Add a contribution for a user with additional user information"""
+        try:
+            # Add or update user information if needed
+            # Используем -1 как заменитель для chat_id, когда он не предоставлен
+            self.add_user(user_id, username, first_name, None, -1)
+            
+            # Then add the contribution using the existing method
+            return self.add_contribution(user_id, value, link, description)
+        except Exception as e:
+            print(f"Error adding user contribution: {e}")
             return False
     
     def get_user_contributions(self, user_value: str) -> List[Dict[str, Any]]:
